@@ -1,0 +1,286 @@
+#!/usr/bin/env bash
+# Copyright 2026 RHerAle
+# SPDX-License-Identifier: Apache-2.0
+# founder-mode: one long-lived Claude Code session per role, run like a small company.
+#
+#   founder-mode init                                  copy templates/ into $FM_HOME, never overwriting a file
+#   founder-mode <role> [-r [id] | --new] [args]       open the role's session (extra claude flags: member roles only)
+#   founder-mode stalled [--hook]                      list sessions whose last entry is an API error
+#
+# FM_HOME           where the org chart, roles and state live (default ~/.founder-mode)
+# FM_DRY_RUN=1      print the claude command and change nothing
+# FM_COMPACT        compaction window for every role, overriding roles.tsv
+# FM_UNLOCK=1       leave the irreversible-action guard out of this session (the launcher says so on stderr)
+# FM_ONE_SEND, FM_SEND_TOOL, FM_SEND_TEXT   let an isolated role send one message, once per launch: to that address,
+#                   with that tool, and with the subject and body in that file (subject on the first line)
+set -euo pipefail
+
+FM_HOME=${FM_HOME:-$HOME/.founder-mode}
+ROOT=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
+CLAUDE_DIR=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
+UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+# 2.1.290 and 2.1.295 closed ways around --restricted and --tools, which the isolated role and the advisors rely on.
+MIN_CLAUDE=2.1.295
+
+die() { echo "founder-mode: $*" >&2; exit 1; }
+# A roles.tsv folder: ~ and $FM_HOME expanded, symlinks resolved when it exists.
+folder() { local d=${1/#\~/$HOME}; d=${d//'$FM_HOME'/$FM_HOME}; [ -d "$d" ] && d=$(cd "$d" && pwd -P); printf '%s' "$d"; }
+# Start time of a process, from /proc on Linux: after a reboot a pid can come back as another program.
+started() { [ -r "/proc/$1/stat" ] && sed -E 's/^.*\) //' "/proc/$1/stat" | cut -d' ' -f20; }
+# alive PID [START]: the process runs, and it is the same one when START is known and Linux can tell.
+alive() {
+  kill -0 "$1" 2>/dev/null || return 1
+  [ -n "${2:-}" ] && [ -r "/proc/$1/stat" ] || return 0
+  [ "$(started "$1")" = "$2" ]
+}
+
+usage() {
+  local roles=
+  [ -f "$FM_HOME/roles.tsv" ] && roles=$(awk -F'\t' '!/^#/ && NF { printf "%s%s", s, $1; s = "|" }' "$FM_HOME/roles.tsv")
+  echo "usage: founder-mode init | stalled [--hook] | ${roles:-<role>} [-r [id] | --new] [args]" >&2
+  exit 2
+}
+
+init() {
+  local f n=0
+  while IFS= read -r f; do
+    [ -e "$FM_HOME/$f" ] && continue
+    mkdir -p "$(dirname "$FM_HOME/$f")"
+    cp "$ROOT/templates/$f" "$FM_HOME/$f"
+    n=$((n + 1))
+  done < <(cd "$ROOT/templates" && find . -type f | sed 's|^\./||')
+  echo "founder-mode: $n new files in $FM_HOME (existing files kept). Edit roles.tsv and ORGCHART.md before the first launch."
+}
+
+for dep in jq node; do command -v "$dep" >/dev/null || die "needs $dep"; done
+case ${1:-} in
+  init) init; exit 0 ;;
+  stalled) shift; exec node "$ROOT/bin/stalled.js" "$@" ;;
+  ''|-h|--help) usage ;;
+esac
+
+role=$1; shift
+[[ $role =~ ^[A-Za-z0-9_-]+$ ]] || usage
+[ -f "$FM_HOME/roles.tsv" ] || die "no $FM_HOME/roles.tsv; run: founder-mode init"
+row=$(awk -F'\t' -v r="$role" '$1 == r { print; exit }' "$FM_HOME/roles.tsv")
+[ -n "$row" ] || usage
+IFS=$'\t' read -r _ name model effort dir kind compact rolefile <<<"$row"
+[ -n "${rolefile:-}" ] || die "roles.tsv: the $role row needs 8 tab-separated columns, with - for a default"
+[ "$kind" = - ] && kind=member
+[ "$compact" = - ] && compact=300000
+[ "$rolefile" = - ] && rolefile=$role
+compact=${FM_COMPACT:-$compact}
+case $kind in member|coordinator|advisor|isolated) ;; *) die "roles.tsv: unknown kind '$kind' for $role" ;; esac
+dir=$(folder "$dir")
+[ -d "$dir" ] || die "$role works in $dir, which does not exist"
+rf=$FM_HOME/roles/$rolefile.md
+[ -f "$rf" ] || die "missing role file $rf"
+# A session that reads a file in a folder loads that folder's CLAUDE.md as instructions, so an isolated role's folder
+# holds no other role's folder and sits inside none. Checked on every launch: the layout is everyone's risk.
+pairs=$(awk -F'\t' '!/^#/ && NF >= 6 { print $1 "\t" $5 "\t" $6 }' "$FM_HOME/roles.tsv")
+while IFS=$'\t' read -r ri di ki; do
+  [ "$ki" = isolated ] || continue
+  di=$(folder "$di")
+  while IFS=$'\t' read -r rc dc _; do
+    [ "$rc" = "$ri" ] && continue
+    dc=$(folder "$dc")
+    case "$di/" in "$dc/"*) die "the isolated role $ri works in $di, inside $rc's folder $dc; move it out (roles.tsv)" ;; esac
+    case "$dc/" in "$di/"*) die "the isolated role $ri works in $di, which holds $rc's folder $dc; move it out (roles.tsv)" ;; esac
+  done <<<"$pairs"
+  # From inside its folder it could rewrite the org chart, the role files, settings/all.json or the hooks.
+  for x in "$(folder "$FM_HOME")" "$ROOT"; do
+    case "$x/" in "$di/"*) die "the isolated role $ri works in $di, which holds $x; move one of them out" ;; esac
+  done
+done <<<"$pairs"
+
+id='' new=0 resume=0 rest=()
+while [ $# -gt 0 ]; do
+  case $1 in
+    --new) new=1 ;;
+    -c|--continue) resume=1 ;;
+    -r|--resume) if [ $# -gt 1 ] && [[ $2 != -* ]]; then id=$2; shift; else resume=1; fi ;;
+    --resume=*) id=${1#*=} ;;
+    # claude reads -r<id> as -r <id>.
+    -r?*) id=${1#-r} ;;
+    # Each of these picks, forks or renames a conversation past the ownership and open checks below.
+    --session-id*|--fork-session|--from-pr*|--teleport*|-n|-n?*|--name|--name=*)
+      die "$1 is the launcher's job: use -r <id> or --new" ;;
+    --safe-mode|--bare) die "$1 turns off the hooks, the guard included" ;;
+    --settings|--settings=*) die "$1 would replace the launcher's settings; put the role's own in $FM_HOME/settings/$rolefile.json" ;;
+    --bg|--background|--desktop|--cloud|--cloud=*|--environment|--environment=*|--tmux|--tmux=*)
+      die "$1 takes the session out of this terminal, past the lock" ;;
+    # A group of short options can hide one of the above (-pr <id>).
+    -[!-]?*) die "$1: give short options one at a time" ;;
+    -*)
+      # Advisors and the isolated role get their limits from the flags below; an extra flag could widen them.
+      case $kind in advisor|isolated) die "the $kind role $role takes no extra claude flags" ;; esac
+      rest+=("$1") ;;
+    *) rest+=("$1") ;;
+  esac
+  shift
+done
+# An advisor sees one case per conversation; -r reopens the case in progress.
+[ "$kind" = advisor ] && [ "$resume" = 0 ] && [ -z "$id" ] && new=1
+
+st=$FM_HOME/state
+S=$st/$role.session
+[ -z "$id" ] && [ "$new" = 0 ] && [ -s "$S" ] && id=$(cat "$S")
+[ -n "$id" ] || id=$(node -p 'require("node:crypto").randomUUID()')
+# Given anything but an id, claude -r searches by name or opens a picker, and both reach every role's conversations.
+[[ $id =~ $UUID_RE ]] || die "-r takes a conversation id (a UUID), not a name"
+
+t=
+for f in "$CLAUDE_DIR"/projects/*/"$id".jsonl; do [ -f "$f" ] && t=$f && break; done
+if [ -n "$t" ]; then
+  # The first agentName in a transcript is the session name that opened it.
+  owner=$(grep -a -m1 -o '"agentName":"[^"]*"' "$t" | cut -d'"' -f4 || true)
+  [ -z "$owner" ] || [ "$owner" = "$name" ] || die "conversation $id belongs to $owner, not $name"
+fi
+# Two processes on one conversation write the same transcript at once.
+for s in "$CLAUDE_DIR"/sessions/*.json; do
+  [ -f "$s" ] || continue
+  e=$(jq -r --arg id "$id" --arg n "$name" 'select(.sessionId == $id or .name == $n) | "\(.pid) \(.procStart // "")"' "$s" 2>/dev/null || true)
+  [ -n "$e" ] || continue
+  read -r pid ps <<<"$e"
+  if alive "$pid" "$ps"; then die "$name is already open (pid $pid, $s); switch to its window"; fi
+done
+# Claude Code registers a session only once it has started; the lock covers that gap and outlives it.
+lock=$st/$role.lock
+held() { local p s; IFS=: read -r p s <<<"$(readlink "$lock" 2>/dev/null)"; [ -n "$p" ] && alive "$p" "$s" && echo "$p"; }
+busy() { die "$name is starting or open in another terminal (launcher pid $1; delete $lock if that pid is not founder-mode)"; }
+if p=$(held); then busy "$p"; fi
+
+if [ "$kind" = isolated ]; then
+  # It reads outside mail, which can carry instructions: it gets its own role file and nothing about the company.
+  sp=$(cat "$rf")
+  mem=$dir/memory
+else
+  sp="$(cat "$FM_HOME/ORGCHART.md")"$'\n\n'"$(cat "$rf")"
+  mem=$FM_HOME/memory/$role
+fi
+sp=${sp//'$FM_HOME'/$FM_HOME}
+
+allowed=Write,Edit
+hooks='{}'
+fixed='{}'
+# Set here and not in a template, so no edit can drop it: the isolated role writes none of the files that Claude Code
+# loads by itself as instructions (CLAUDE.md, CLAUDE.local.md, AGENTS.md and anything under .claude/), in any letter
+# case, since a case-insensitive disk serves claude.md as CLAUDE.md.
+[ "$kind" = isolated ] && fixed=$(jq -cn '
+  def ci: explode | map([.] | implode | if test("[a-zA-Z]") then "[\(ascii_upcase)\(ascii_downcase)]" else . end) | add;
+  ["CLAUDE.md", "CLAUDE.local.md", "AGENTS.md"] | map("**/" + ci) + ["**/" + (".claude" | ci) + "/**"]
+  | {permissions: {deny: [.[] as $p | "Edit(\($p))", "Write(\($p))"]}}')
+# Claude Code ranks CLAUDE_CODE_EFFORT_LEVEL above --effort and any agent's or call's effort, and
+# CLAUDE_CODE_AUTO_COMPACT_WINDOW above --autocompact, so a value in the founder's shell or user settings would
+# override every row of roles.tsv. An empty value in --settings cancels it. disableAllHooks in the user, project or
+# local settings would switch off every hook, the guard and the send gate included; --settings outranks those three,
+# though not a managed policy.
+cleared='{"env": {"CLAUDE_CODE_EFFORT_LEVEL": "", "CLAUDE_CODE_AUTO_COMPACT_WINDOW": ""}, "disableAllHooks": false}'
+h=$ROOT/hooks
+# Each hook takes its values as arguments, in exec form (no shell), and none from the environment: a session can end
+# up with another process's environment, and these values decide what the guard and the send gate let through.
+# Every role gets the pointer hook, which follows /clear and /branch to the conversation now running.
+pointer=$(jq -n --arg p "$h/session-pointer.sh" --arg fm "$FM_HOME" --arg r "$role" \
+  '{hooks: {SessionStart: [{hooks: [{type: "command", command: $p, args: [$fm, $r]}]}]}}')
+# The two gates block on failure: Claude Code lets a call through when a hook can't start or times out, unless the
+# hook sets onFailure: "block". The guard reads a 1 MB command in seconds, so 30 seconds only cuts off a runaway.
+unlock=0
+case $kind in
+  member|coordinator|advisor)
+    [ "${FM_UNLOCK:-}" = 1 ] && unlock=1
+    hooks=$(jq -n --arg g "$h/irreversible-guard.sh" --arg o "$h/orgchart-notice.sh" --arg fm "$FM_HOME" \
+      --arg r "$role" --arg k "$kind" --arg f "$rf" --argjson u "$unlock" '{hooks: (
+      {UserPromptSubmit: [{hooks: [{type: "command", command: $o, args: [$fm, $r, $k, $f], timeout: 10}]}]}
+      + if $u == 1 then {} else {PreToolUse: [{matcher: "Bash|Monitor",
+        hooks: [{type: "command", command: $g, args: [$k], timeout: 30, onFailure: "block"}]}]} end)}') ;;
+esac
+grant=''
+if [ -n "${FM_ONE_SEND:-}" ]; then
+  [ "$kind" = isolated ] || die "FM_ONE_SEND only applies to an isolated role"
+  # A plain name, so the hook matcher reads it as one exact tool and not as a pattern.
+  [[ ${FM_SEND_TOOL:-} =~ ^[A-Za-z0-9_-]+$ ]] || die "FM_ONE_SEND needs FM_SEND_TOOL, the exact name of the send tool"
+  # A founder approves the text as well as the address. The launcher copies it at launch, outside the role's folder.
+  [ -f "${FM_SEND_TEXT:-}" ] || die "FM_ONE_SEND needs FM_SEND_TEXT, a file with the approved subject on its first line and the body after it"
+  # A fresh grant id per launch: the one-send mark and the approved text belong to this launch.
+  grant=$(node -p 'require("node:crypto").randomUUID()')
+  allowed+=,$FM_SEND_TOOL
+  hooks=$(jq -n --arg m "$FM_SEND_TOOL" --arg c "$h/one-send.sh" --arg fm "$FM_HOME" --arg r "$role" \
+    --arg to "$FM_ONE_SEND" --arg g "$grant" \
+    '{hooks: {PreToolUse: [{matcher: $m,
+      hooks: [{type: "command", command: $c, args: [$fm, $r, $to, $g], onFailure: "block"}]}]}}')
+fi
+
+# One --settings value: the memory folder, settings/all.json (not for the isolated role), settings/<role file>.json,
+# the hooks and the fixed rules, merged so that lists add up the way Claude Code merges them across settings files,
+# and the fixed rules come last, so no file under settings/ can undo them.
+extra=()
+[ "$kind" != isolated ] && [ -f "$FM_HOME/settings/all.json" ] && extra+=("$FM_HOME/settings/all.json")
+[ -f "$FM_HOME/settings/$rolefile.json" ] && extra+=("$FM_HOME/settings/$rolefile.json")
+settings=$(jq -cs 'def m($a; $b): if ($a | type) == "object" and ($b | type) == "object"
+    then reduce ($b | keys_unsorted[]) as $k ($a; .[$k] = m(.[$k]; $b[$k]))
+    elif ($a | type) == "array" and ($b | type) == "array" then $a + $b
+    elif $b == null then $a else $b end;
+  reduce .[] as $x ({}; m(.; $x))' \
+  <(jq -n --arg m "$mem" '{autoMemoryDirectory: $m}') ${extra[@]+"${extra[@]}"} <(echo "$pointer") <(echo "$hooks") \
+  <(echo "$fixed") <(echo "$cleared")) || die "a file under $FM_HOME/settings is not valid JSON"
+
+flags=(-n "$name" --model "$model" --effort "$effort" --autocompact "$compact")
+case $kind in
+  # Only the built-in tools named here exist, and no MCP tool at all, since a connector can write where the launcher can't see.
+  advisor) flags+=(--tools "Read,Glob,Grep,Bash,WebFetch,WebSearch,SendMessage,ListAgents,ToolSearch" --disallowed-tools "mcp__*") ;;
+  # No shell, file tools fenced to its folder, every call nobody pre-approved refused instead of asked, and no
+  # SendMessage: what it reads from outside must not reach a session with a shell. Its folder is its only channel.
+  isolated) flags+=(--restricted --permission-mode dontAsk --tools "Read,Glob,Grep,Write,Edit,WebSearch,ToolSearch" --allowed-tools "$allowed") ;;
+esac
+if [ -n "$t" ]; then flags+=(-r "$id"); else flags+=(--session-id "$id"); fi
+cmd=(claude "${flags[@]}" --append-system-prompt "$sp" --settings "$settings" ${rest[@]+"${rest[@]}"})
+# FM_HOME and FM_ROLE serve the commands a session runs, such as founder-mode stalled; no hook takes its values from
+# them.
+# CLAUDE_CODE_DISABLE_AGENT_VIEW turns off /background, the left-arrow shortcut and --bg. A session moved to the
+# background restarts in a process of Claude Code's background service, with that service's environment, and keeps
+# only some of its launch flags: --settings is on the documented list; --append-system-prompt, --tools and
+# --restricted are not.
+# The launcher refuses --safe-mode and --bare because they switch off every hook, and CLAUDE_CODE_SAFE_MODE and
+# CLAUDE_CODE_SIMPLE do the same. Empty values in the session's environment cancel a value from the founder's shell.
+env=(FM_HOME="$FM_HOME" FM_ROLE="$role" CLAUDE_CODE_SAFE_MODE= CLAUDE_CODE_SIMPLE= CLAUDE_CODE_DISABLE_AGENT_VIEW=1)
+if [ -n "$grant" ]; then
+  # An export left in a terminal would grant a send on every launch from it, so the launcher says so each time.
+  echo "founder-mode: FM_ONE_SEND grants $name one send to $FM_ONE_SEND, with the text in $FM_SEND_TEXT" >&2
+fi
+if [ "$unlock" = 1 ]; then
+  # An export left in a terminal would lift the guard for every launch from it, so the launcher says so each time.
+  echo "founder-mode: FM_UNLOCK=1, so the irreversible-action guard is off for $name" >&2
+fi
+for v in CLAUDE_CODE_EFFORT_LEVEL CLAUDE_CODE_AUTO_COMPACT_WINDOW CLAUDE_CODE_SAFE_MODE CLAUDE_CODE_SIMPLE; do
+  [ -z "${!v:-}" ] || echo "founder-mode: your shell sets $v; the launcher clears it for $name" >&2
+done
+if jq -e '.disableAllHooks == true' "$CLAUDE_DIR/settings.json" >/dev/null 2>&1; then
+  echo "founder-mode: $CLAUDE_DIR/settings.json sets disableAllHooks; the launcher turns the hooks back on for $name" >&2
+fi
+
+if [ "${FM_DRY_RUN:-}" = 1 ]; then
+  printf 'cd %q && ' "$dir"; printf '%q ' "${env[@]}" "${cmd[@]}"; echo
+  exit 0
+fi
+command -v claude >/dev/null || die "needs claude (Claude Code)"
+v=$(claude --version 2>/dev/null | grep -Eo '^[0-9]+\.[0-9]+\.[0-9]+' || true)
+awk -v v="${v:-0.0.0}" -v m="$MIN_CLAUDE" 'BEGIN { split(v, a, "."); split(m, b, ".")
+  for (i = 1; i <= 3; i++) if (a[i] + 0 != b[i] + 0) exit a[i] + 0 < b[i] + 0 }' \
+  || die "needs Claude Code $MIN_CLAUDE or later (found ${v:-no version})"
+mkdir -p "$st/loaded" "$mem" "$FM_HOME/work/$role"
+[ -z "$grant" ] || cp "$FM_SEND_TEXT" "$st/$role.one-send.$grant.txt"
+me="$$:$(started $$ || true)"
+if ! ln -s "$me" "$lock" 2>/dev/null; then
+  if p=$(held); then busy "$p"; fi
+  # Known gap: two launchers that find the same dead lock in the same instant both take it.
+  ln -sfn "$me" "$lock"
+fi
+trap 'rm -f "$lock"' EXIT
+echo "$id" > "$S"
+# The notice hook dates each conversation by the prompt it carries. A new one gets the launch time on its first
+# prompt; a resumed one keeps its mark, and one resumed without a mark gets the notice once.
+touch "$st/$role.launched"
+[ -n "$t" ] && [ ! -e "$st/loaded/$id" ] && touch -t 200001010000 "$st/loaded/$id"
+cd "$dir"
+export "${env[@]}"
+"${cmd[@]}"

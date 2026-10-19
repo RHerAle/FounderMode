@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "deny": [
+      "mcp__claude_ai_Gmail",
+      "mcp__claude_ai_Microsoft_365",
+      "RemoteTrigger"
+    ]
+  }
+}

@@ -1,0 +1,19 @@
+# One row per session, tab-separated. Write - for a default.
+#   name      exact session name; other sessions address their messages to it
+#   dir       working folder; a leading ~ and $FM_HOME are expanded. An isolated role's folder holds no other
+#             role's folder and sits inside none
+#   model, effort  the launcher passes both at each launch. A resumed conversation re-reads its history uncached on
+#             a new model, and on a new effort unless the model keeps the cache (Claude Code's prompt caching page
+#             lists which do): change them with --new or right after the role compacts
+#   kind      - (member), coordinator, advisor or isolated
+#   compact   compaction window in tokens (default 300000)
+#   rolefile  roles/<rolefile>.md and settings/<rolefile>.json (default: the role)
+# role	name	model	effort	dir	kind	compact	rolefile
+coordinator	Coordinator	opus	max	~/company	coordinator	1000000	-
+engineering	Engineering	opus	xhigh	~/company/product	-	-	-
+dev	Dev	opus	high	~/company/product	-	-	-
+legal	Legal	opus	max	~/company/admin	-	-	-
+finance	Finance	opus	max	~/company/admin	-	-	-
+outreach	Outreach	opus	high	~/outreach	isolated	-	-
+advisor1	Advisor1	opus	max	$FM_HOME/board	advisor	1000000	advisor
+advisor2	Advisor2	opus	max	$FM_HOME/board	advisor	1000000	advisor
