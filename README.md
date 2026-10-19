@@ -136,7 +136,7 @@ The mail tools reach every thread in the mailbox they connect to, so give Outrea
 | `session-pointer.sh` | SessionStart | Keeps `state/<role>.session` on the conversation that runs, including the new one that `/clear` or `/branch` starts. It skips a resume, because the launcher already wrote that id. |
 | `one-send.sh` | PreToolUse on the send tool | Enforces a one-time send grant. |
 
-The guard cuts the command at `;`, `&`, `|`, parentheses, `<`, `>` and backticks, and reads it twice: with quotes dropped, and with each quoted word kept whole. A command with a substitution (`$(...)` or backticks) gets two more readings, with each substitution as one word, so `git push origin "$(git branch --show-current)" -f` still counts as a forced push. It blocks:
+The guard drops each redirection with its target, cuts the command at `;`, `&`, `|`, parentheses and backticks, and reads it twice: with quotes dropped, and with each quoted word kept whole. A command with a substitution (`$(...)` or backticks) gets two more readings, with each substitution as one word, so `git push origin "$(git branch --show-current)" -f` still counts as a forced push. It blocks:
 
 - in `gh`: every subcommand of a command group or its aliases, except reads, `gh pr create`, clones and checkouts; a variable or a substitution in place of the group or the subcommand; `gh copilot`; and `gh api` with a write. The guard judges each `gh api` call on its own and lets through fields sent with `-X GET` and an inline GraphQL query without a mutation;
 - `git push` with `--force`, `--force-with-lease`, `--force-if-includes`, `--mirror`, `--delete`, `--prune`, `--all`, `--branches`, `--tags` or `--follow-tags`, or any abbreviation of these that git accepts (`--del`, `--mirr`); with a short option group holding `f` or `d`; with a `+`, `:` or `*` refspec, a `refs/tags/` refspec or `tag <name>`; and to a branch named `main` or `master`;
@@ -156,7 +156,7 @@ No hook takes its role, kind, home, address or grant from the environment, which
 
 Three switches outside the hooks turn them all off, the guard and the send gate included, as `--safe-mode` and `--bare` do. They are `disableAllHooks` in your user, project or local settings, and `CLAUDE_CODE_SAFE_MODE` or `CLAUDE_CODE_SIMPLE` in your shell. The launcher sets `disableAllHooks` to false in `--settings` and starts the session with both variables empty. It warns on stderr when your shell sets either variable or your user settings set `disableAllHooks`. A `disableAllHooks` in managed settings still wins.
 
-Claude Code lets a call through when its hook can't start or times out, unless the hook sets `onFailure: "block"` (2.1.295 and later). The guard and the one-send hook set it, so Claude Code blocks the call when either script is missing, crashes or times out. The guard's timeout is 30 seconds. On Linux with bash 5.3 it read 1 MB in 4 to 7 seconds, whether the command held plain text, quotes, substitutions, `gh` calls or `gh api` calls.
+Claude Code lets a call through when its hook can't start or times out, unless the hook sets `onFailure: "block"` (2.1.295 and later). The guard and the one-send hook set it, so Claude Code blocks the call when either script is missing, crashes or times out. The guard's timeout is 30 seconds. On Linux with bash 5.3 it read 1 MB in 4 to 7 seconds, whether the command held plain text, quotes, substitutions, lines split with a backslash, `gh` calls or `gh api` calls.
 
 ### Stalled sessions
 
@@ -208,7 +208,7 @@ The rules live in markdown you edit: `ORGCHART.md` for every session, `roles/*.m
 - **Launcher only.** Starting `claude` by hand skips every check. Inside a session, `/resume` can open another role's conversation, and `/teleport` and `/desktop` hand the conversation to the cloud or the desktop app, outside the launcher's lock and checks. A founder relaunches the role with `founder-mode <role> -r <id>` instead. A shell function in your `~/.bashrc` keeps plain `claude` out of the role folders:
 
   ```bash
-  claude() { case $PWD/ in "$HOME"/company/*|"$HOME"/outreach/*) echo "use founder-mode <role>" >&2; return 1 ;; esac; command claude "$@"; }
+  claude() { case $PWD/ in "$HOME"/company/*|"$HOME"/outreach/*|"$HOME"/.founder-mode/board/*) echo "use founder-mode <role>" >&2; return 1 ;; esac; command claude "$@"; }
   ```
 
 - **Shell commands only.** The guard sees Bash and Monitor. A connector, or a built-in tool such as `RemoteTrigger`, acts without it: `settings/all.json` denies the mail connectors and `RemoteTrigger` to member roles. Deny there any other tool that writes outside, such as sharing a file or creating an event, or keep member roles out of bypass mode.

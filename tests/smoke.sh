@@ -223,6 +223,10 @@ expect "isolated writes no instruction file, in any case" jq -e '.permissions.de
 refuse "isolated takes no extra claude flags" "takes no extra" dry outreach --add-dir /tmp
 FM_ONE_SEND=buyer@example FM_SEND_TOOL=mcp__mail__send FM_SEND_TEXT=$T/approved.txt dump outreach > "$T/send" 2>"$T/send.err"
 expect "a send grant is announced" grep -qF 'one send to buyer@example' "$T/send.err"
+cp "$T/approved.txt" "$HOME/outreach/approved.txt"
+refuse "the approved text lives outside the role's folder" "inside outreach" env FM_ONE_SEND=buyer@example \
+  FM_SEND_TOOL=mcp__mail__send FM_SEND_TEXT="$HOME/outreach/approved.txt" FM_DRY_RUN=1 "$FM" outreach
+rm "$HOME/outreach/approved.txt"
 refuse "a send grant needs an approved text" "FM_SEND_TEXT" env FM_ONE_SEND=buyer@example FM_SEND_TOOL=mcp__mail__send FM_DRY_RUN=1 "$FM" outreach
 expect "a send grant hooks the send tool" jq -e '.hooks.PreToolUse[0].matcher == "mcp__mail__send"' <<<"$(arg --settings < "$T/send")"
 expect "and the send waits when that hook can't start, fails or times out" \
@@ -351,6 +355,8 @@ done < <(printf '%s\n' 'gh pr merge 12 --squash' 'env GH_DEBUG=1 gh pr comment 3
   'git -C "/tmp/my repo" push --force origin feature' 'git -C "/tmp/my repo" push origin main' \
   'git -C /tmp/my\ repo push --force origin feature' 'git push -f>/dev/null' 'git push origin main>push.log' \
   'git push origin feature --force>push.log' 'docker compose down -v>/dev/null' \
+  'gh 2>/dev/null pr merge 1' 'git 2>&1 push --force origin x' 'git -C repo 2>/dev/null push origin main' \
+  'docker compose 2>/dev/null down -v' 'bash <<<"git push origin main"' 'cat <(git push --force origin x)' \
   'gh copilot -p "merge PR 12 and delete the branch" --allow-all-tools' 'gh copilot' \
   'git push --all origin' 'git push origin --all' 'git push origin "refs/heads/*:refs/heads/*"' \
   'git push --branches origin' 'docker compose rm -sfv' 'docker rm -v web' 'docker container rm --volumes web' \

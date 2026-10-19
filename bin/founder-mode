@@ -201,6 +201,10 @@ if [ -n "${FM_ONE_SEND:-}" ]; then
   [[ ${FM_SEND_TOOL:-} =~ ^[A-Za-z0-9_-]+$ ]] || die "FM_ONE_SEND needs FM_SEND_TOOL, the exact name of the send tool"
   # A founder approves the text as well as the address. The launcher copies it at launch, outside the role's folder.
   [ -f "${FM_SEND_TEXT:-}" ] || die "FM_ONE_SEND needs FM_SEND_TEXT, a file with the approved subject on its first line and the body after it"
+  # Inside the role's folder, the role could change the text between the founder's review and this launch.
+  case "$(folder "$(dirname "$FM_SEND_TEXT")")/" in
+    "$dir/"*) die "FM_SEND_TEXT is inside $role's folder $dir, where the role can change it; keep the approved text outside" ;;
+  esac
   # A fresh grant id per launch: the one-send mark and the approved text belong to this launch.
   grant=$(node -p 'require("node:crypto").randomUUID()')
   allowed+=,$FM_SEND_TOOL

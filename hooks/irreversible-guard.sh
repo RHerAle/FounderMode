@@ -21,7 +21,8 @@ raw=$(jq -r '.tool_input.command // empty' <<<"$input" 2>/dev/null) || exit 0
 # Two readings of the command; the guard blocks what either one catches. In the first, quotes and backslashes go, as
 # the shell drops them: bash -c "git push origin main" is a push to main. In the second, a space inside quotes or after
 # a backslash becomes _, so a quoted path stays one word: git -C "/tmp/my repo" push --force.
-one=${raw//$'\\\n'/ }
+# A line split with a backslash is one line. One awk pass: bash's own ${raw//...} took 18 seconds on 1.76 MB.
+one=$(printf '%s' "$raw" | awk 'BEGIN { RS = "\001" } { gsub(/\\\n/, " "); printf "%s", $0 }')
 # The shell reads $'main' as main and ${IFS} as a space.
 one=${one//\$\'/\'} one=${one//'${IFS}'/ } one=${one//'$IFS'/ }
 one=$(printf '%s' "$one" | tr -d "\"'\\\\")
@@ -36,9 +37,14 @@ two=$(jq -r '.tool_input.command // empty | [foreach explode[] as $c ({q: null, 
     elif .q != null and $c == .q then .q = null
     elif .q != null and ($c == 32 or $c == 9 or $c == 10) then .o = 95
     else .o = $c end; .o // empty)] | implode' <<<"$input" 2>/dev/null)
-# One command per line, since grep compares one line at a time: ; & | ( ) < > and backticks end a command or a word,
-# so (cd wt && git push), git push origin main;ls and git push -f>/dev/null read as plain commands.
-split() { printf '%s' "$1" | tr ';&|()`<>' '\n\n\n\n\n\n\n\n'; }
+# One command per line, since grep compares one line at a time: ; & | ( ) and backticks end a command or a word,
+# so (cd wt && git push), git push origin main;ls and git push -f>/dev/null read as plain commands. Each redirection
+# goes first, with its target, as bash takes one anywhere in a command: gh 2>/dev/null pr merge 1. A here-string keeps
+# its word, which bash <<<"..." runs, and a target stops at ( so the command in <(...) stays.
+split() {
+  printf '%s' "$1" | sed -E 's/<<</ /g; s/(^|[[:space:]])[0-9]+([<>])/\1\2/g; s/[<>]+&?[^[:space:];&|()`<>]*/ /g' \
+    | tr ';&|()`' '\n\n\n\n\n\n'
+}
 # Each command substitution, $(...) or backticks, becomes the word X, innermost first, so the words after it stay with
 # their command: git push origin "$(git branch --show-current)" -f. The readings without it see the command inside.
 # One gsub pass per nesting level, over the whole command as one record: replacing one substitution at a time costs
