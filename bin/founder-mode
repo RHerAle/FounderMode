@@ -262,8 +262,17 @@ if jq -e '.disableAllHooks == true' "$CLAUDE_DIR/settings.json" >/dev/null 2>&1;
   echo "founder-mode: $CLAUDE_DIR/settings.json sets disableAllHooks; the launcher turns the hooks back on for $name" >&2
 fi
 
+# A session that opens a role passes down its own identity. With the parent's session id, child flag and message
+# socket, the new role starts as that session's child: it is missing from the local session list and answers only
+# over Remote Control. The launcher drops those variables and keeps the founder's own, such as CLAUDE_CONFIG_DIR.
+# Known gap: a variable a later Claude Code adds to this set passes until the pattern names it.
+inherited=()
+while IFS= read -r v; do inherited+=("$v"); done < <(compgen -e | grep -E \
+  '^(CLAUDECODE|CLAUDE_PID|CLAUDE_EFFORT|CLAUDE_CODE_(ENTRYPOINT|EXECPATH|SSE_PORT|CHILD_SESSION|SESSION_[A-Z_]+|BRIDGE_[A-Z_]+|MESSAGING_[A-Z_]+))$' || true)
+
 if [ "${FM_DRY_RUN:-}" = 1 ]; then
-  printf 'cd %q && ' "$dir"; printf '%q ' "${env[@]}" "${cmd[@]}"; echo
+  printf 'cd %q && ' "$dir"; [ ${#inherited[@]} = 0 ] || printf 'unset %s && ' "${inherited[*]}"
+  printf '%q ' "${env[@]}" "${cmd[@]}"; echo
   exit 0
 fi
 command -v claude >/dev/null || die "needs claude (Claude Code)"
@@ -286,5 +295,6 @@ echo "$id" > "$S"
 touch "$st/$role.launched"
 [ -n "$t" ] && [ ! -e "$st/loaded/$id" ] && touch -t 200001010000 "$st/loaded/$id"
 cd "$dir"
+[ ${#inherited[@]} = 0 ] || unset "${inherited[@]}"
 export "${env[@]}"
 "${cmd[@]}"

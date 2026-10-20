@@ -63,6 +63,8 @@ Most rules in this table came out of a real failure. The PR log works around a G
 | Per-role settings travel with the launch, never in a shared file | One global file held a setting for every session, and one session's startup could switch it off for all of them. |
 | A rule marked as enforced binds without its hook | A session pushed from a clone where the repository's hooks weren't installed, and the check it skipped was failing. |
 | Ten lines per message, the rest in a file | A long message costs output to write, and the receiver re-reads it on every request after. |
+| If a program can do it, a program does it | A role on the strongest model spent a turn every day on a job a timer can run. |
+| The launcher drops a parent session's variables | A role opened from inside another session started as its child and answered only over Remote Control. |
 | A one-time send grant | A founder wanted one email sent from the isolated session without handing it a send tool for good. |
 
 ## How it works

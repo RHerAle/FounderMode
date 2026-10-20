@@ -108,6 +108,12 @@ rm "$FM_HOME/settings/engineering.json"
 for v in CLAUDE_CODE_EFFORT_LEVEL CLAUDE_CODE_AUTO_COMPACT_WINDOW CLAUDE_CODE_SAFE_MODE CLAUDE_CODE_SIMPLE; do
   expect "a $v in the shell is announced" grep -qF "your shell sets $v" <<<"$(env "$v=1" FM_DRY_RUN=1 "$FM" engineering 2>&1 >/dev/null)"
 done
+# A role opened from inside another session must not start as that session's child.
+seen=$(env CLAUDECODE=1 CLAUDE_CODE_SESSION_ID=parent CLAUDE_CODE_CHILD_SESSION=1 CLAUDE_CODE_MESSAGING_SOCKET=/x \
+  CLAUDE_CODE_USE_BEDROCK=1 bash -c 'line=$(FM_DRY_RUN=1 "$0" engineering) || exit 1
+  claude() { echo "${CLAUDECODE-} ${CLAUDE_CODE_SESSION_ID-} ${CLAUDE_CODE_CHILD_SESSION-} ${CLAUDE_CODE_MESSAGING_SOCKET-}|${CLAUDE_CODE_USE_BEDROCK-}"; }
+  eval "$line"' "$FM")
+expect "a parent session's identity doesn't reach the role" test "$seen" = "   |1"
 expect "settings switch the hooks back on, whatever disableAllHooks says elsewhere" jq -e '.disableAllHooks == false' <<<"$s"
 printf '%s\n' '{"disableAllHooks": true}' > "$FM_HOME/settings/engineering.json"
 expect "and no file under settings/ switches them off" jq -e '.disableAllHooks == false' <<<"$(dump engineering | arg --settings)"

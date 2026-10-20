@@ -67,12 +67,12 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 - **Fix:** The quick start puts `~/.local/bin` on the `PATH` and says to add it to the shell profile. The smoke test runs the quick start in a clean home folder, with a `PATH` where `founder-mode` isn't found.
 - **Where:** README (Quick start), `tests/smoke.sh`.
 
-### Clear the `CLAUDE*` variables before one session starts another
+### The launcher drops a parent session's variables
 
-- **What happened:** When the coordinator relaunched roles from its own shell, `claude` refused to start until the coordinator cleared the variables it had passed down.
-- **Cause:** A child process inherits `CLAUDECODE`, and `claude` takes it for a nested session.
-- **Fix:** Unset every `CLAUDE*` variable before a session opens another role in a new terminal.
-- **Where:** No mechanism.
+- **What happened:** The coordinator opened a role in a new terminal from its own shell, clearing a few variables by hand. The role started as the coordinator's child, with the coordinator's session id and message socket. It was missing from the local session list and answered only over Remote Control. An older `claude` refused to start at all in the same spot.
+- **Cause:** A child process inherits the session's variables (`CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, the messaging socket and its token), and a list kept by hand missed some of them.
+- **Fix:** The launcher unsets those variables before it starts `claude`, and keeps the founder's own, such as `CLAUDE_CONFIG_DIR`. The dry run shows what it unsets.
+- **Where:** `bin/founder-mode`, `tests/smoke.sh`.
 
 ## Prompts and context
 
@@ -417,6 +417,13 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 - **Cause:** Every request re-sends the conversation, and every prompt carried a large project file and the schemas of every tool.
 - **Fix:** Smaller compaction windows, only the plugins and connectors each role uses, and facts sent to the checker.
 - **Where:** `templates/roles.tsv`, `bin/founder-mode` (the settings merge), `agents/checker.md`.
+
+### A program does what a program can do
+
+- **What happened:** A role on the strongest model ran the same daily job by hand, and each run cost a turn on that model over its whole context. A founder ruled that anything programmable becomes software, and that sessions are for reasoning and analysis.
+- **Cause:** Nothing sent recurring work to a program, so it fell to the session that owned it.
+- **Fix:** A recurring job with fixed steps runs from a timer or a script that commits its output and leaves a short status file. The session reads the status and steps in on a failure. Each role lists what it repeats, and the coordinator sets the order to build it.
+- **Where:** `templates/ORGCHART.md` (Pace). No mechanism.
 
 ### A subagent runs at the session's model and effort
 
