@@ -556,5 +556,17 @@ expect "the block has the dry run" grep -qF 'FM_DRY_RUN=1 founder-mode coordinat
 expect "it runs from a clean home" env -i HOME="$Q" PATH="$qp" bash -euc "$qs"
 expect "and leaves the launcher and the org chart in place" test -x "$Q/.local/bin/founder-mode" -a -f "$Q/.founder-mode/ORGCHART.md"
 
+echo "# recipes"
+for s in "$ROOT"/recipes/*/setup.sh; do
+  r=${s%/setup.sh}; r=${r##*/}
+  expect "$r: the setup script parses" bash -n "$s"
+  expect "$r: it fits the 64 KB setup box" test "$(wc -c <"$s")" -lt 65536
+done
+expect "cloud-design-session: the design-env it writes parses" \
+  bash -n <(awk '/<<.DESIGNENV.$/ { f = 1; next } /^DESIGNENV$/ { f = 0 } f' "$ROOT/recipes/cloud-design-session/setup.sh")
+expect "cloud-design-session: BRIEF.md matches the brief in setup.sh" \
+  diff <(awk '/<<.BRIEF.$/ { f = 1; next } /^BRIEF$/ { f = 0 } f' "$ROOT/recipes/cloud-design-session/setup.sh") \
+  "$ROOT/recipes/cloud-design-session/BRIEF.md"
+
 echo "$fails failed"
 [ "$fails" = 0 ]

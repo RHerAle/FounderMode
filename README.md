@@ -193,6 +193,31 @@ Sessions talk through Claude Code's cross-session messaging: `SendMessage`, addr
 
 The rules live in markdown you edit: `ORGCHART.md` for every session, `roles/*.md` for each role and `BOARD.md` for the board. [LESSONS.md](LESSONS.md) holds the lessons behind them.
 
+## Recipes
+
+| Recipe | What it sets up |
+|---|---|
+| [Cloud design session](recipes/cloud-design-session/) | A Claude Code cloud environment for an unattended redesign of an app's interface, brand and logo: design skills pinned by commit, fonts and icons with known licences, vector logo tools, a browser for screenshots, a relay that takes Java through the cloud's proxy, and git guards that keep attribution and pushes to the main branch out. |
+
+## Skills we use most
+
+Counted on 26-10-2026 over 883 local Claude Code transcripts: each call to the Skill tool, plus each direct read of a skill's `SKILL.md`. Internal skills are left out. Cloud sessions keep their transcripts in the cloud, so the skills of the cloud design session (huashu-design, ui-ux-pro-max and the logo kit) don't show up here.
+
+| Skill | Uses | What we use it for | Source |
+|---|---|---|---|
+| stop-slop | 45 | Every text that leaves the company: web copy, documents, emails, commits | [hardikpandya/stop-slop](https://github.com/hardikpandya/stop-slop) |
+| loop | 8 | Rounds that pace themselves overnight; on top of that, `/loop` was typed 185 times | Built into Claude Code |
+| paper-lookup | 7 | Finding papers and DOIs with a traceable source | Installed skill by K-Dense, MIT |
+| claude-api | 5 | Model ids, prices and limits, checked instead of remembered | Built into Claude Code |
+| peer-review | 4 | Reviewing a paper before it goes out | Installed skill by K-Dense, MIT |
+| logo-design | 3 | Logo work from a brief to vector files | [kaankiziltug/logo-design-skill](https://github.com/kaankiziltug/logo-design-skill) |
+| update-config | 3 | Hooks and settings | Built into Claude Code |
+| frontend-design | 2 | Web interface work | [anthropics/skills](https://github.com/anthropics/skills) |
+| artifact-design | 2 | Pages published as artifacts | Built into Claude Code |
+| web-design-guidelines | 1 | Auditing a page against interface guidelines | Installed skill by Vercel |
+
+Two plugins run in every session without being called, so a count of calls misses them: [caveman](https://github.com/juliusbrussee/caveman), which keeps chat between sessions short, and [ponytail](https://github.com/DietrichGebert/ponytail), which pushes for the smallest change that works.
+
 ## Limits
 
 - **The guard is a list of patterns.** A session set on getting past it can wrap the command in a script, and any session with a shell can edit the hooks. These pass:
