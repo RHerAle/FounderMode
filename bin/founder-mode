@@ -246,6 +246,11 @@ case $kind in
   # SendMessage: what it reads from outside must not reach a session with a shell. Its folder is its only channel.
   isolated) flags+=(--restricted --permission-mode dontAsk --tools "Read,Glob,Grep,Write,Edit,WebSearch,ToolSearch" --allowed-tools "$allowed") ;;
 esac
+# A role's own plugin, such as Design's skills (SKILLS.md): only that role loads them. Advisors and the
+# isolated role keep their fixed tool lists.
+case $kind in member|coordinator)
+  [ -f "$FM_HOME/plugins/$rolefile/.claude-plugin/plugin.json" ] && flags+=(--plugin-dir "$FM_HOME/plugins/$rolefile") ;;
+esac
 if [ -n "$t" ]; then flags+=(-r "$id"); else flags+=(--session-id "$id"); fi
 cmd=(claude "${flags[@]}" --append-system-prompt "$sp" --settings "$settings" ${rest[@]+"${rest[@]}"})
 # FM_HOME and FM_ROLE serve the commands a session runs, such as founder-mode stalled; no hook takes its values from

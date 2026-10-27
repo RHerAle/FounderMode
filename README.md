@@ -27,6 +27,7 @@ flowchart TB
     end
     E["Engineering"]
     D["Dev"]
+    DS["Design<br/>visual layer, brand, logo"]
     L["Legal"]
     FI["Finance"]
     O["Outreach<br/>isolated: own folder, no shell, no messages"]
@@ -35,11 +36,13 @@ flowchart TB
     C --> L
     C --> FI
     E --> D
+    C --> DS
+    DS -. "logic, with an acceptance check" .-> D
     FI --> O
     C <--> B
 ```
 
-Arrows show who assigns work to whom. Any session can message the owner of a topic without going through the coordinator; Outreach works through files in its folder. The roles are templates: rename them, drop some, add your own in `roles.tsv`. Each transcript records the session name that opened it, so a role whose name you change starts again with `--new`.
+Solid arrows show who assigns work to whom. Design asks Dev for the logic its pages need, and Engineering reviews Design's code as it reviews Dev's. Any session can message the owner of a topic without going through the coordinator; Outreach works through files in its folder. The roles are templates: rename them, drop some, add your own in `roles.tsv`. Each transcript records the session name that opened it, so a role whose name you change starts again with `--new`.
 
 ## Why each rule exists
 
@@ -174,6 +177,10 @@ Three switches outside the hooks turn them all off, the guard and the send gate 
 
 Claude Code lets a call through when its hook can't start or times out, unless the hook sets `onFailure: "block"` (2.1.295 and later). The guard and the one-send hook set it, so Claude Code blocks the call when either script is missing, crashes or times out. The guard's timeout is 30 seconds. On Linux with bash 5.3 it read 1 MB in 4 to 7 seconds, whether the command held plain text, quotes, substitutions, lines split with a backslash, `gh` calls or `gh api` calls.
 
+### The Design role's skills
+
+The launcher passes `$FM_HOME/plugins/<role file>` with `--plugin-dir` to a member or the coordinator when that folder holds a plugin (`.claude-plugin/plugin.json`). Design's skills go in `$FM_HOME/plugins/design`, so only Design loads them. [SKILLS.md](SKILLS.md) lists each one with its pinned source, its licence and where it goes.
+
 ### Stalled sessions
 
 `founder-mode stalled` lists the roles whose last conversation entry is an API error, such as a usage limit, and says whether each process is alive. It reads local files and costs no tokens. The coordinator's hook runs it on every prompt and names the live ones. After a reset, the coordinator wakes each with a message and asks a founder to resume the isolated role, which takes no messages. A closed session needs a relaunch.
@@ -224,30 +231,26 @@ Sessions talk through Claude Code's cross-session messaging: `SendMessage`, addr
 
 The rules live in markdown you edit: `ORGCHART.md` for every session, `roles/*.md` for each role and `BOARD.md` for the board. [LESSONS.md](LESSONS.md) holds the lessons behind them.
 
-## Recipes
-
-| Recipe | What it sets up |
-|---|---|
-| [Cloud design session](recipes/cloud-design-session/) | A Claude Code cloud environment for an unattended redesign of an app's interface, brand and logo: design skills pinned by commit, fonts and icons with known licences, vector logo tools, a browser for screenshots, a relay that takes Java through the cloud's proxy, and git guards that keep attribution and pushes to the main branch out. |
-
 ## Skills we use most
 
-Counted on 26-10-2026 over 883 local Claude Code transcripts: each call to the Skill tool, plus each direct read of a skill's `SKILL.md`. Internal skills are left out. Cloud sessions keep their transcripts in the cloud, so the skills of the cloud design session (huashu-design, ui-ux-pro-max and the logo kit) don't show up here.
+Counted on 26-10-2026 over 883 local Claude Code transcripts: each call to the Skill tool, plus each direct read of a skill's `SKILL.md`. Internal skills are left out.
 
-| Skill | Uses | What we use it for | Source |
-|---|---|---|---|
-| stop-slop | 45 | Every text that leaves the company: web copy, documents, emails, commits | [hardikpandya/stop-slop](https://github.com/hardikpandya/stop-slop) |
-| loop | 8 | Rounds that pace themselves overnight; on top of that, `/loop` was typed 185 times | Built into Claude Code |
-| paper-lookup | 7 | Finding papers and DOIs with a traceable source | Installed skill by K-Dense, MIT |
-| claude-api | 5 | Model ids, prices and limits, checked instead of remembered | Built into Claude Code |
-| peer-review | 4 | Reviewing a paper before it goes out | Installed skill by K-Dense, MIT |
-| logo-design | 3 | Logo work from a brief to vector files | [kaankiziltug/logo-design-skill](https://github.com/kaankiziltug/logo-design-skill) |
-| update-config | 3 | Hooks and settings | Built into Claude Code |
-| frontend-design | 2 | Web interface work | [anthropics/skills](https://github.com/anthropics/skills) |
-| artifact-design | 2 | Pages published as artifacts | Built into Claude Code |
-| web-design-guidelines | 1 | Auditing a page against interface guidelines | Installed skill by Vercel |
+| Skill | Uses | What we use it for | Source | Licence |
+|---|---|---|---|---|
+| stop-slop | 45 | Every text that leaves the company: web copy, documents, emails, commits | [hardikpandya/stop-slop](https://github.com/hardikpandya/stop-slop/tree/8da1f030185bdfe8471220585162991eaeb970e9) | MIT |
+| loop | 8 | Rounds that pace themselves overnight; on top of that, `/loop` was typed 185 times | Built into Claude Code | |
+| paper-lookup | 7 | Finding papers and DOIs with a traceable source | [K-Dense-AI/scientific-agent-skills](https://github.com/K-Dense-AI/scientific-agent-skills/tree/5f2bc0341354fd5590aef76a533ada1e1e5b4e62/skills/paper-lookup) | MIT |
+| claude-api | 5 | Model ids, prices and limits, checked instead of remembered | Built into Claude Code | |
+| peer-review | 4 | Reviewing a paper before it goes out | [K-Dense-AI/scientific-agent-skills](https://github.com/K-Dense-AI/scientific-agent-skills/tree/5f2bc0341354fd5590aef76a533ada1e1e5b4e62/skills/peer-review) | MIT |
+| logo-design | 3 | Logo work from a brief to vector files | [kaankiziltug/logo-design-skill](https://github.com/kaankiziltug/logo-design-skill/tree/0ecf52e9a4b3ac92b714f7cc6e3148ab8c774134/skills/logo-design) | MIT |
+| update-config | 3 | Hooks and settings | Built into Claude Code | |
+| frontend-design | 2 | Web interface work | [anthropics/skills](https://github.com/anthropics/skills/tree/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/frontend-design) | Apache-2.0 |
+| artifact-design | 2 | Pages published as artifacts | Built into Claude Code | |
+| web-design-guidelines | 1 | Auditing a page against interface guidelines | [vercel-labs/agent-skills](https://github.com/vercel-labs/agent-skills/tree/1a2c79d4e6c4a2283dc2c614b6538cbe1ed5ca62/skills/web-design-guidelines) | No licence file |
 
-Two plugins run in every session without being called, so a count of calls misses them: [caveman](https://github.com/juliusbrussee/caveman), which keeps chat between sessions short, and [ponytail](https://github.com/DietrichGebert/ponytail), which pushes for the smallest change that works.
+Two plugins run in every session without being called, so a count of calls misses them: [caveman](https://github.com/juliusbrussee/caveman/tree/9b68f7ed12b05e7efaff18e65c5a3fc2849fd0a4) (Apache-2.0), which keeps chat between sessions short, and [ponytail](https://github.com/DietrichGebert/ponytail/tree/09c434ab73ca43761c5d8b0c5d341926c2fba710) (MIT), which pushes for the smallest change that works.
+
+[SKILLS.md](SKILLS.md) lists every skill, plugin, font and tool a role uses, with its pinned source, its licence and where to install it. Founder Mode installs none of them.
 
 ## Limits
 

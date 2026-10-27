@@ -12,6 +12,7 @@
 coordinator	Coordinator	opus	max	~/company	coordinator	1000000	-
 engineering	Engineering	opus	xhigh	~/company/product	-	-	-
 dev	Dev	opus	high	~/company/product	-	-	-
+design	Design	opus	max	~/company/product	-	-	-
 legal	Legal	opus	max	~/company/admin	-	-	-
 finance	Finance	opus	max	~/company/admin	-	-	-
 outreach	Outreach	opus	high	~/outreach	isolated	-	-

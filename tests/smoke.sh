@@ -70,8 +70,8 @@ fi
 
 echo "# init"
 expect "init runs" "$FM" init
-for f in ORGCHART.md BOARD.md PR.md roles.tsv roles/advisor.md settings/outreach.json board/precedents.md \
-  deliverables.txt forbidden-terms.tsv; do
+for f in ORGCHART.md BOARD.md PR.md roles.tsv roles/advisor.md roles/design.md settings/outreach.json \
+  board/precedents.md deliverables.txt forbidden-terms.tsv; do
   expect "init wrote $f" test -f "$FM_HOME/$f"
 done
 echo "# edited" >> "$FM_HOME/ORGCHART.md"
@@ -79,6 +79,8 @@ echo "# edited" >> "$FM_HOME/ORGCHART.md"
 expect "a second init keeps an edited file" grep -qx '# edited' "$FM_HOME/ORGCHART.md"
 
 echo "# a member role"
+expect "the design role carries its role file" grep -qx '# Your role: Design' <<<"$(dump design | arg --append-system-prompt)"
+expect "and gets the member hooks" jq -e '.hooks.PreToolUse[0].hooks[0].args == ["member"]' <<<"$(dump design | arg --settings)"
 d=$(dump engineering | arg --append-system-prompt)
 expect "prompt opens with the org chart" grep -qx '# Org chart' <<<"$d"
 expect "prompt carries the role file" grep -qx '# Your role: Engineering' <<<"$d"
@@ -133,7 +135,7 @@ for a in intern junior senior; do
   expect "the $a runs at high effort, whatever the session's" grep -qx 'effort: high' "$ROOT/agents/$a.md"
 done
 for x in 'intern:model: haiku' 'intern:omitClaudeMd: true' 'junior:model: sonnet' 'junior:omitClaudeMd: true' \
-  'junior:disallowedTools: Agent' 'senior:model: opus'; do
+  'junior:disallowedTools: Agent' 'senior:model: opus' 'senior:maxTurns: 150'; do
   expect "agents/${x%%:*}.md sets ${x#*:}" grep -qx "${x#*:}" "$ROOT/agents/${x%%:*}.md"
 done
 expect "the senior reads CLAUDE.md" lacks omitClaudeMd "$(cat "$ROOT/agents/senior.md")"
@@ -589,6 +591,19 @@ cap PreToolUse member 85 >/dev/null
 expect "without its arguments it does nothing" test -z "$(FM_HOME=$FM_HOME "$ROOT/hooks/weekly-cap.sh" <<<'{"hook_event_name":"PreToolUse"}')"
 rm "$FM_HOME/weekly-cap" "$FM_HOME/state/usage.json"
 
+echo "# the Design role's plugin and SKILLS.md"
+mkdir -p "$FM_HOME/plugins/design/.claude-plugin"
+awk '/```json$/ { f = 1; next } /```$/ { f = 0 } f' "$ROOT/SKILLS.md" > "$FM_HOME/plugins/design/.claude-plugin/plugin.json"
+expect "SKILLS.md's plugin file is valid JSON" jq -e '.name == "design"' "$FM_HOME/plugins/design/.claude-plugin/plugin.json"
+expect "the launcher passes the plugin to Design" test "$(dump design | arg --plugin-dir)" = "$FM_HOME/plugins/design"
+expect "and to no other role" lacks --plugin-dir "$(dry engineering)"
+rm -rf "$FM_HOME/plugins"
+expect "without a plugin file, Design gets no --plugin-dir" lacks --plugin-dir "$(dry design)"
+expect "every GitHub link in SKILLS.md is pinned to a commit" \
+  test -z "$(grep -oE 'https://github.com/[^)]*' "$ROOT/SKILLS.md" | grep -vE '^https://github.com/[^/]+/[^/]+/tree/[0-9a-f]{40}(/|$)')"
+expect "and so is every one in the README's skills table" \
+  test -z "$(sed -n '/^## Skills we use most/,/^## Limits/p' "$ROOT/README.md" | grep -oE 'https://github.com/[^)]*' | grep -vE '/tree/[0-9a-f]{40}(/|$)')"
+
 echo "# stalled sessions"
 ids=55555555-5555-4555-8555-555555555555
 echo "$ids" > "$FM_HOME/state/dev.session"
@@ -660,18 +675,6 @@ while IFS= read -r x; do [ -n "$x" ] && [ ! -e "$x/founder-mode" ] && qp+=:$x; d
 expect "the block has the dry run" grep -qF 'FM_DRY_RUN=1 founder-mode coordinator' <<<"$qs"
 expect "it runs from a clean home" env -i HOME="$Q" PATH="$qp" bash -euc "$qs"
 expect "and leaves the launcher and the org chart in place" test -x "$Q/.local/bin/founder-mode" -a -f "$Q/.founder-mode/ORGCHART.md"
-
-echo "# recipes"
-for s in "$ROOT"/recipes/*/setup.sh; do
-  r=${s%/setup.sh}; r=${r##*/}
-  expect "$r: the setup script parses" bash -n "$s"
-  expect "$r: it fits the 64 KB setup box" test "$(wc -c <"$s")" -lt 65536
-done
-expect "cloud-design-session: the design-env it writes parses" \
-  bash -n <(awk '/<<.DESIGNENV.$/ { f = 1; next } /^DESIGNENV$/ { f = 0 } f' "$ROOT/recipes/cloud-design-session/setup.sh")
-expect "cloud-design-session: BRIEF.md matches the brief in setup.sh" \
-  diff <(awk '/<<.BRIEF.$/ { f = 1; next } /^BRIEF$/ { f = 0 } f' "$ROOT/recipes/cloud-design-session/setup.sh") \
-  "$ROOT/recipes/cloud-design-session/BRIEF.md"
 
 echo "$fails failed"
 [ "$fails" = 0 ]

@@ -18,6 +18,7 @@ Only the founders authorize a merge to the main branch, a deploy, spending money
 | Coordinator | Decisions that cross areas, conflicts between sessions, the integration branch, the founders' decision list, the PR log, this org chart and the roles. Moderates the advisory board and votes on it |
 | Engineering | Architecture, ADRs, and the review of every code change before it reaches the integration branch |
 | Dev | Implementing what Engineering or the Coordinator ask for |
+| Design | The visual layer, the public pages, the design system, the icon set, the brand and the logo |
 | Legal | Company formation, IP, trademarks, licenses, data protection, contracts |
 | Finance | Business plan, pricing proposals, funding, banking, the CRM |
 | Outreach | First sales contacts: drafts only, from the account sheets Finance prepares. Never sends. Isolated: sees only its own folder and takes no messages |
@@ -39,7 +40,7 @@ Each session's model, effort and folder live in `$FM_HOME/roles.tsv`.
 
 ## Reporting lines and the advisory board
 
-- Engineering assigns and reviews Dev's work. Finance assigns and reviews Outreach's work. The Coordinator may assign work to Dev itself, or to Outreach through its folder, and tells their lead.
+- Engineering assigns and reviews Dev's work. Finance assigns and reviews Outreach's work. Design asks Dev for the logic its pages need, with an acceptance check; Engineering reviews every Design branch that touches code; Legal takes the logo's authorship and registration. The Coordinator may assign work to Dev itself, or to Outreach through its folder, and tells their lead.
 - The advisory board (Coordinator, Advisor1, Advisor2) audits big decisions: changes to this session system, and architecture or project decisions that are hard to undo. Each member looks for the flaw in every option, then votes. A recommendation needs all three votes, with two rebuttal rounds at most; without agreement, a founder decides. The board recommends and authorizes nothing.
 - Advisors talk only to the Coordinator. To put a topic before the board, ask the Coordinator. The procedure is in `$FM_HOME/BOARD.md`.
 
@@ -49,6 +50,7 @@ Each session's model, effort and folder live in `$FM_HOME/roles.tsv`.
 - Every session works under one GitHub account, so GitHub can't show which session opened what: log every PR you open or close in `$FM_HOME/PR.md`.
 - On GitHub a session opens PRs and pushes commits, nothing else. A comment or a review goes out under a founder's name and needs that founder's OK. Reviews between sessions go by message.
 - Each push and each PR run CI, and CI minutes cost money. Keep at most one open PR per session and repository, leave the branch green on your machine and push once per batch. Never push loose commits to an open PR; a small fix waits for the next batch.
+- Every text that leaves the company (web copy, documents, emails, commits, PR descriptions) goes through the stop-slop skill, with no em or en dashes. `SKILLS.md` in the Founder Mode repository says where to get it.
 - Batch GitHub calls: local git before the API, `--json` with `--jq` to pick fields, never `gh` in a loop, `--body-file` for long text.
 - The Coordinator removes each worktree once its branch is merged, with `git worktree remove` and without `--force`, after checking `git status --porcelain --ignored`. An ignored `.env` doesn't show in plain status and would go with the worktree. Before you exclude files from worktrees to save disk, search every live branch for references to them.
 
