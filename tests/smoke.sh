@@ -30,6 +30,8 @@ refuse() {
 }
 # exit2 CMD...: CMD exits with 2, the code that blocks a tool call.
 exit2() { "$@"; [ $? = 2 ]; }
+exit1() { "$@" >/dev/null; [ $? = 1 ]; }
+exit2x() { "$@" >/dev/null; [ $? = 2 ]; }
 lacks() { ! grep -qF -- "$1" <<<"$2"; }
 # dump ROLE ARGS...: the launcher's dry-run line, run with claude swapped for a dump of its arguments, NUL-separated.
 dump() {
@@ -58,17 +60,18 @@ as_hook() {
 }
 
 echo "# syntax"
-for f in "$FM" "$ROOT"/hooks/*.sh "$ROOT/tests/smoke.sh"; do expect "bash -n ${f#"$ROOT"/}" bash -n "$f"; done
-expect "node --check bin/stalled.js" node --check "$ROOT/bin/stalled.js"
+for f in "$FM" "$ROOT"/bin/*.sh "$ROOT"/hooks/*.sh "$ROOT/tests/smoke.sh"; do expect "bash -n ${f#"$ROOT"/}" bash -n "$f"; done
+for f in "$ROOT"/bin/*.js; do expect "node --check ${f#"$ROOT"/}" node --check "$f"; done
 if command -v shellcheck >/dev/null; then
-  expect "shellcheck (warnings and errors)" shellcheck -S warning "$FM" "$ROOT"/hooks/*.sh "$ROOT/tests/smoke.sh"
+  expect "shellcheck (warnings and errors)" shellcheck -S warning "$FM" "$ROOT"/bin/*.sh "$ROOT"/hooks/*.sh "$ROOT/tests/smoke.sh"
 else
   echo "skip  shellcheck (not installed)"
 fi
 
 echo "# init"
 expect "init runs" "$FM" init
-for f in ORGCHART.md BOARD.md PR.md roles.tsv roles/advisor.md settings/outreach.json board/precedents.md; do
+for f in ORGCHART.md BOARD.md PR.md roles.tsv roles/advisor.md settings/outreach.json board/precedents.md \
+  deliverables.txt forbidden-terms.tsv; do
   expect "init wrote $f" test -f "$FM_HOME/$f"
 done
 echo "# edited" >> "$FM_HOME/ORGCHART.md"
@@ -93,7 +96,8 @@ expect "the pointer hook gets FM_HOME and the role" jq -e --arg c "$ROOT/hooks/s
   '.hooks.SessionStart[0].hooks[0] | .command == $c and .args == [$h, "engineering"]' <<<"$s"
 expect "and neither it nor the notice blocks anything" \
   jq -e '[.hooks.SessionStart[0].hooks[0], .hooks.UserPromptSubmit[0].hooks[0] | has("onFailure")] | any | not' <<<"$s"
-expect "the notice hook is attached" jq -e '.hooks.UserPromptSubmit | length == 1' <<<"$s"
+expect "the notice hook and the weekly cap watch the prompts" jq -e --arg h "$ROOT/hooks" \
+  '[.hooks.UserPromptSubmit[0].hooks[].command] == ["\($h)/orgchart-notice.sh", "\($h)/weekly-cap.sh"]' <<<"$s"
 expect "the notice hook gets FM_HOME, the role, its kind and its role file" jq -e --arg c "$ROOT/hooks/orgchart-notice.sh" \
   --arg h "$FM_HOME" '.hooks.UserPromptSubmit[0].hooks[0] | .command == $c and .args == [$h, "engineering", "member", "\($h)/roles/engineering.md"]' <<<"$s"
 expect "every hook runs in exec form, without a shell" jq -e '[.hooks[][].hooks[] | has("args")] | all' <<<"$s"
@@ -125,7 +129,24 @@ rm "$HOME/.claude/settings.json"
 for v in CLAUDE_CODE_SAFE_MODE CLAUDE_CODE_SIMPLE; do
   expect "the session gets $v empty, since a value would switch every hook off" grep -qF " $v= " <<<"$(dry engineering)"
 done
-expect "the checker runs at high effort, whatever the session's" grep -qx 'effort: high' "$ROOT/agents/checker.md"
+for a in intern junior senior; do
+  expect "the $a runs at high effort, whatever the session's" grep -qx 'effort: high' "$ROOT/agents/$a.md"
+done
+for x in 'intern:model: haiku' 'intern:omitClaudeMd: true' 'junior:model: sonnet' 'junior:omitClaudeMd: true' \
+  'junior:disallowedTools: Agent' 'senior:model: opus'; do
+  expect "agents/${x%%:*}.md sets ${x#*:}" grep -qx "${x#*:}" "$ROOT/agents/${x%%:*}.md"
+done
+expect "the senior reads CLAUDE.md" lacks omitClaudeMd "$(cat "$ROOT/agents/senior.md")"
+pre() { jq -c --arg m "$1" '[.hooks.PreToolUse[] | select(.matcher == $m) | .hooks[] | {c: (.command | sub(".*/"; "")), a: .args}]'; }
+post() { jq -c --arg m "$1" '[.hooks.PostToolUse[] | select(.matcher == $m) | .hooks[] | {c: (.command | sub(".*/"; "")), a: .args}]'; }
+expect "the tier hook gets the tier names" test "$(pre Agent <<<"$s")" = '[{"c":"subagent-tier.sh","a":["intern","junior","senior"]}]'
+expect "the weekly cap watches every tool, with FM_HOME and the kind" \
+  test "$(pre '*' <<<"$s")" = "[{\"c\":\"weekly-cap.sh\",\"a\":[\"$FM_HOME\",\"member\"]}]"
+expect "the delegation log gets FM_HOME, the role and the tiers" \
+  test "$(post Agent <<<"$s")" = "[{\"c\":\"delegation-log.sh\",\"a\":[\"$FM_HOME\",\"engineering\",\"intern\",\"junior\",\"senior\"]}]"
+expect "the deliverable check gets FM_HOME" test "$(post 'Write|Edit' <<<"$s")" = "[{\"c\":\"deliverable-check.sh\",\"a\":[\"$FM_HOME\"]}]"
+expect "only the guard blocks when it can't run" \
+  jq -e '[.hooks[][].hooks[] | select(.onFailure) | .command | sub(".*/"; "")] == ["irreversible-guard.sh"]' <<<"$s"
 expect "the coordinator's guard knows its kind" jq -e '.hooks.PreToolUse[0].hooks[0].args == ["coordinator"]' <<<"$(dump coordinator | arg --settings)"
 expect "default compaction window" test "$(dump engineering | arg --autocompact)" = 300000
 expect "per-role compaction window" test "$(dump coordinator | arg --autocompact)" = 1000000
@@ -138,8 +159,8 @@ done
 u=$(FM_UNLOCK=1 dry engineering 2>&1 >/dev/null)
 expect "FM_UNLOCK=1 is announced" grep -qF 'guard is off for Engineering' <<<"$u"
 s=$(FM_UNLOCK=1 dump engineering 2>/dev/null | arg --settings)
-expect "FM_UNLOCK=1 leaves the guard out of the settings" jq -e '.hooks.PreToolUse == null' <<<"$s"
-expect "and keeps the notice hook" jq -e '.hooks.UserPromptSubmit | length == 1' <<<"$s"
+expect "FM_UNLOCK=1 leaves the guard out of the settings" jq -e '[.hooks.PreToolUse[].matcher] == ["Agent", "*"]' <<<"$s"
+expect "and keeps the notice hook" jq -e '.hooks.UserPromptSubmit[0].hooks[0].command | endswith("/orgchart-notice.sh")' <<<"$s"
 expect "and isn't passed on to the session" lacks FM_UNLOCK "$(FM_UNLOCK=1 dry engineering 2>/dev/null)"
 
 echo "# conversations"
@@ -483,6 +504,90 @@ expect "and so does a body sent with CRLF" sendas 0a21 \
 expect "refuses without its arguments, whatever its environment holds" exit2 env FM_HOME="$FM_HOME" FM_ROLE=outreach \
   FM_ONE_SEND=buyer@example FM_GRANT=0a1f "$ROOT/hooks/one-send.sh" <<<'{"tool_input":{"to":"buyer@example","subject":"s","body":"b"}}'
 expect "refuses a grant without its launch id" exit2 sendas '' '{"tool_input":{"to":"buyer@example","subject":"s","body":"b"}}'
+
+echo "# subagent tiers"
+tier() { jq -cn --arg t "$1" '{tool_input: {subagent_type: $t, description: "count the rows"}}' \
+  | "$ROOT/hooks/subagent-tier.sh" intern junior senior | jq -rs '.[0].hookSpecificOutput.permissionDecision // "allow"'; }
+for t in '' general-purpose Explore Plan fork; do expect "refuses a subagent of type ${t:-none}" test "$(tier "$t")" = deny; done
+for t in intern junior senior my-own-agent; do expect "lets the $t through" test "$(tier "$t")" = allow; done
+expect "the tier hook names the tiers" grep -qF 'intern junior senior' <<<"$(jq -cn '{tool_input: {}}' | "$ROOT/hooks/subagent-tier.sh" intern junior senior)"
+expect "without its arguments it does nothing" test -z "$("$ROOT/hooks/subagent-tier.sh" <<<'{"tool_input":{}}')"
+
+echo "# delegation log"
+dlog() { jq -cn --arg t "$1" --arg u "${2:-toolu_01ABCDEFGH12345678}" \
+  '{tool_use_id: $u, tool_input: {subagent_type: $t, description: "count\tthe rows"}}' \
+  | "$ROOT/hooks/delegation-log.sh" "$FM_HOME" dev intern junior senior; }
+L=$FM_HOME/state/delegations.tsv
+c=$(dlog junior | jq -r .hookSpecificOutput.additionalContext)
+expect "logs a call to a tier and gives its id" grep -qF 'call as 12345678' <<<"$c"
+expect "the log line holds role, tier, id and description" grep -qP '\tdev\tjunior\t12345678\tcount the rows$' "$L"
+expect "and the note names the command that marks it" grep -qF "$ROOT/bin/founder-mode delegations 12345678" <<<"$c"
+dlog general-purpose >/dev/null
+expect "ignores a type outside the tiers" test "$(wc -l < "$L")" = 1
+dlog intern toolu_01ZZZZZZZZ87654321 >/dev/null
+expect "lists the unmarked calls" test "$("$FM" delegations | cut -f4 | tr '\n' ' ')" = '12345678 87654321 '
+expect "marks one" "$FM" delegations 12345678 ok 'src/a.js:12'
+expect "and lists only the other" test "$("$FM" delegations | cut -f4)" = 87654321
+expect "lists only the caller's own" test -z "$(FM_ROLE=legal "$FM" delegations)"
+refuse "refuses an unknown status" "unknown status" "$FM" delegations 87654321 fine
+refuse "refuses an id that isn't logged" "no delegation" "$FM" delegations 00000000 ok
+expect "without its arguments the hook does nothing" test -z "$("$ROOT/hooks/delegation-log.sh" <<<'{"tool_input":{"subagent_type":"junior"}}')"
+
+echo "# deliverable check"
+ck() { node "$ROOT/bin/check-text.js" --terms "$FM_HOME/forbidden-terms.tsv" "$@"; }
+D=$T/deliv; mkdir -p "$D"
+printf 'Plain text, nothing wrong.\n' > "$D/clean.md"
+expect "a clean text passes" ck "$D/clean.md"
+printf 'One %s two\nCo-Authored-By: x\nkey sk-ant-abc123\n' $'\u2014' > "$D/bad.txt"
+o=$(ck "$D/bad.txt"); r=$?
+expect "a text with findings exits 1" test "$r" = 1
+expect "finds the em dash" grep -qF 'line 1: [dash or arrow] em dash U+2014' <<<"$o"
+expect "finds the attribution line" grep -qF 'line 2: [attribution]' <<<"$o"
+expect "finds the secret and hides it" grep -qx "$D/bad.txt: line 3: \[secret\]" <<<"$o"
+printf 'a &rarr; b\n' > "$D/ent.html"
+expect "reads an HTML entity as the character" exit1 ck "$D/ent.html"
+printf '%s\n' 'Use `a %s b` in code.' '```' 'x %s y' '```' > "$D/code.md"
+sed -i "s/%s/$(printf '\u2192')/g" "$D/code.md"
+expect "Markdown code doesn't count for dashes and arrows" ck "$D/code.md"
+printf 'old-name\tAcme Old\nconfidential\tHushco\n' >> "$FM_HOME/forbidden-terms.tsv"
+printf 'We were Acme Old.\nTalks with hushco went well.\nHushcorp is fine.\n' > "$D/names.md"
+o=$(ck "$D/names.md")
+expect "prints an old name" grep -qF 'line 1: [old name] Acme Old' <<<"$o"
+expect "hides a confidential name and its context" grep -qx "$D/names.md: line 2: \[confidential name\]" <<<"$o"
+expect "matches whole words only" lacks 'line 3' "$o"
+expect "an unreadable file exits 2" exit2x ck "$D/missing.md"
+echo "$D/*.md" >> "$FM_HOME/deliverables.txt"
+expect "the hook reports on a deliverable" grep -qF 'confidential name' <<<"$(jq -cn --arg f "$D/names.md" '{tool_input: {file_path: $f}}' | "$ROOT/hooks/deliverable-check.sh" "$FM_HOME")"
+expect "and stays quiet on a clean one" test -z "$(jq -cn --arg f "$D/clean.md" '{tool_input: {file_path: $f}}' | "$ROOT/hooks/deliverable-check.sh" "$FM_HOME")"
+expect "and on a file outside the list" test -z "$(jq -cn --arg f "$D/bad.txt" '{tool_input: {file_path: $f}}' | "$ROOT/hooks/deliverable-check.sh" "$FM_HOME")"
+expect "without its argument it does nothing" test -z "$(jq -cn --arg f "$D/names.md" '{tool_input: {file_path: $f}}' | FM_HOME=$FM_HOME "$ROOT/hooks/deliverable-check.sh")"
+
+echo "# weekly cap"
+now=$(date +%s)
+# cap EVENT KIND UTILIZATION [RESET_OFFSET] [AGE]: the hook's decision, with a reading written AGE seconds ago.
+cap() {
+  jq -cn --argjson u "$3" --argjson r "$((now + ${4:-86400}))" --argjson a "$((now - ${5:-60}))" \
+    '{seven_day: {utilization: $u, resets_at: $r}, read_at: $a}' > "$FM_HOME/state/usage.json"
+  jq -cn --arg e "$1" '{hook_event_name: $e}' | "$ROOT/hooks/weekly-cap.sh" "$FM_HOME" "$2" \
+    | jq -rs '.[0] | if . == null then "none" else .hookSpecificOutput.permissionDecision // .decision // "note" end'
+}
+expect "no cap file, no cap" test "$(cap PreToolUse member 99)" = none
+echo 80 > "$FM_HOME/weekly-cap"
+expect "denies a tool at the cap" test "$(cap PreToolUse member 80)" = deny
+expect "lets a tool through under it" test "$(cap PreToolUse member 79.9)" = none
+expect "blocks a member's prompt" test "$(cap UserPromptSubmit member 85)" = block
+expect "lets the coordinator answer, with a note" test "$(cap UserPromptSubmit coordinator 85)" = note
+expect "and still denies the coordinator's tools" test "$(cap PreToolUse coordinator 85)" = deny
+expect "ignores a reading older than two hours" test "$(cap PreToolUse member 85 86400 7300)" = none
+expect "ignores a week that has reset" test "$(cap PreToolUse member 85 -60)" = none
+echo high > "$FM_HOME/weekly-cap"
+expect "a cap that isn't a number does nothing" test "$(cap PreToolUse member 99)" = none
+echo 80 > "$FM_HOME/weekly-cap"
+echo 'not json' > "$FM_HOME/state/usage.json"
+expect "a broken reading does nothing" test -z "$("$ROOT/hooks/weekly-cap.sh" "$FM_HOME" member <<<'{"hook_event_name":"PreToolUse"}')"
+cap PreToolUse member 85 >/dev/null
+expect "without its arguments it does nothing" test -z "$(FM_HOME=$FM_HOME "$ROOT/hooks/weekly-cap.sh" <<<'{"hook_event_name":"PreToolUse"}')"
+rm "$FM_HOME/weekly-cap" "$FM_HOME/state/usage.json"
 
 echo "# stalled sessions"
 ids=55555555-5555-4555-8555-555555555555

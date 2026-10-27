@@ -1,0 +1,5 @@
+# Names that must not appear in a deliverable. One per line: the kind, a tab, the term. Matched whole-word and
+# ignoring case. Kinds:
+#   old-name       a name the company no longer uses; a finding prints it
+#   confidential   a name under NDA; a finding prints neither the term nor its context
+# Legal keeps the confidential entries.

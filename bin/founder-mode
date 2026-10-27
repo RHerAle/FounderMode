@@ -6,6 +6,7 @@
 #   founder-mode init                                  copy templates/ into $FM_HOME, never overwriting a file
 #   founder-mode <role> [-r [id] | --new] [args]       open the role's session (extra claude flags: member roles only)
 #   founder-mode stalled [--hook]                      list sessions whose last entry is an API error
+#   founder-mode delegations [<id> <status> [note]]    list the subagent calls nobody has marked, or mark one
 #
 # FM_HOME           where the org chart, roles and state live (default ~/.founder-mode)
 # FM_DRY_RUN=1      print the claude command and change nothing
@@ -37,7 +38,7 @@ alive() {
 usage() {
   local roles=
   [ -f "$FM_HOME/roles.tsv" ] && roles=$(awk -F'\t' '!/^#/ && NF { printf "%s%s", s, $1; s = "|" }' "$FM_HOME/roles.tsv")
-  echo "usage: founder-mode init | stalled [--hook] | ${roles:-<role>} [-r [id] | --new] [args]" >&2
+  echo "usage: founder-mode init | stalled [--hook] | delegations [<id> <status> [note]] | ${roles:-<role>} [-r [id] | --new] [args]" >&2
   exit 2
 }
 
@@ -56,6 +57,7 @@ for dep in jq node; do command -v "$dep" >/dev/null || die "needs $dep"; done
 case ${1:-} in
   init) init; exit 0 ;;
   stalled) shift; exec node "$ROOT/bin/stalled.js" "$@" ;;
+  delegations) shift; exec "$ROOT/bin/delegations.sh" "$FM_HOME" "$@" ;;
   ''|-h|--help) usage ;;
 esac
 
@@ -184,15 +186,23 @@ pointer=$(jq -n --arg p "$h/session-pointer.sh" --arg fm "$FM_HOME" --arg r "$ro
   '{hooks: {SessionStart: [{hooks: [{type: "command", command: $p, args: [$fm, $r]}]}]}}')
 # The two gates block on failure: Claude Code lets a call through when a hook can't start or times out, unless the
 # hook sets onFailure: "block". The guard reads a 1 MB command in seconds, so 30 seconds only cuts off a runaway.
+# The subagent hooks get the tier names of agents/: subagent-tier.sh refuses a subagent that would run at the session's
+# model and effort, and delegation-log.sh logs each call to a tier. None of the hooks below blocks on failure.
 unlock=0
 case $kind in
   member|coordinator|advisor)
     [ "${FM_UNLOCK:-}" = 1 ] && unlock=1
-    hooks=$(jq -n --arg g "$h/irreversible-guard.sh" --arg o "$h/orgchart-notice.sh" --arg fm "$FM_HOME" \
-      --arg r "$role" --arg k "$kind" --arg f "$rf" --argjson u "$unlock" '{hooks: (
-      {UserPromptSubmit: [{hooks: [{type: "command", command: $o, args: [$fm, $r, $k, $f], timeout: 10}]}]}
-      + if $u == 1 then {} else {PreToolUse: [{matcher: "Bash|Monitor",
-        hooks: [{type: "command", command: $g, args: [$k], timeout: 30, onFailure: "block"}]}]} end)}') ;;
+    hooks=$(jq -n --arg h "$h" --arg fm "$FM_HOME" --arg r "$role" --arg k "$kind" --arg f "$rf" --argjson u "$unlock" \
+      --argjson t '["intern", "junior", "senior"]' '
+      def hook($c; $a): {type: "command", command: "\($h)/\($c)", args: $a, timeout: 10};
+      {hooks: {
+        UserPromptSubmit: [{hooks: [hook("orgchart-notice.sh"; [$fm, $r, $k, $f]), hook("weekly-cap.sh"; [$fm, $k])]}],
+        PreToolUse: ((if $u == 1 then [] else [{matcher: "Bash|Monitor",
+            hooks: [hook("irreversible-guard.sh"; [$k]) + {timeout: 30, onFailure: "block"}]}] end)
+          + [{matcher: "Agent", hooks: [hook("subagent-tier.sh"; $t)]},
+             {matcher: "*", hooks: [hook("weekly-cap.sh"; [$fm, $k])]}]),
+        PostToolUse: [{matcher: "Agent", hooks: [hook("delegation-log.sh"; [$fm, $r] + $t)]},
+          {matcher: "Write|Edit", hooks: [hook("deliverable-check.sh"; [$fm]) + {timeout: 30}]}]}}') ;;
 esac
 grant=''
 if [ -n "${FM_ONE_SEND:-}" ]; then

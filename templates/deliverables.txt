@@ -1,0 +1,4 @@
+# Files that leave the company. After each Write or Edit on a file whose path matches one of these patterns,
+# hooks/deliverable-check.sh runs bin/check-text.js on it and tells the session what it found. One bash pattern per
+# line, absolute or starting with $FM_HOME; * crosses folders. Only deliverables: internal notes don't go here.
+# Example: $FM_HOME/work/*/email-*.md

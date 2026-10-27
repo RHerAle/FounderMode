@@ -4,7 +4,7 @@ Founder Mode turns a handful of Claude Code sessions into a small company. Each 
 
 Plenty of tools run Claude Code agents in parallel, Claude Code's own agent teams among them. Founder Mode keeps each session in one role, with its own memory and conversation, for weeks, under a chain of authority that ends at a human.
 
-It is a bash launcher, a set of markdown templates and four hooks around stock Claude Code. It runs no server or daemon and needs only bash, jq and node.
+It is a bash launcher, a set of markdown templates, three subagent definitions and eight hooks around stock Claude Code. It runs no server or daemon and needs only bash, jq and node.
 
 ## What's in it
 
@@ -66,6 +66,8 @@ Most rules in this table came out of a real failure. The PR log works around a G
 | If a program can do it, a program does it | A role on the strongest model spent a turn every day on a job a timer can run. |
 | The launcher drops a parent session's variables | A role opened from inside another session started as its child and answered only over Remote Control. |
 | A one-time send grant | A founder wanted one email sent from the isolated session without handing it a send tool for good. |
+| Subagents come in three tiers, each with its own model and effort | Subagents took the model and effort of the session that launched them: in one week, 3,826 subagent requests ran at `max` or `xhigh`. |
+| A program checks every deliverable after each write | Sessions checked dashes, attribution and confidential names by hand before each delivery. |
 
 ## How it works
 
@@ -137,6 +139,10 @@ The mail tools reach every thread in the mailbox they connect to, so give Outrea
 | `orgchart-notice.sh` | UserPromptSubmit | Tells a session, once, that the org chart or its role changed after its conversation started. For the coordinator it also names the live sessions stopped on an API error. |
 | `session-pointer.sh` | SessionStart | Keeps `state/<role>.session` on the conversation that runs, including the new one that `/clear` or `/branch` starts. It skips a resume, because the launcher already wrote that id. |
 | `one-send.sh` | PreToolUse on the send tool | Enforces a one-time send grant. |
+| `subagent-tier.sh` | PreToolUse on Agent | Refuses a subagent that would run at the session's model and effort (general-purpose, Explore, Plan, a fork or no type) and names the tiers. |
+| `delegation-log.sh` | PostToolUse on Agent | Logs each call to a tier in `state/delegations.tsv` and gives the session its id, for `founder-mode delegations` to mark once checked. |
+| `deliverable-check.sh` | PostToolUse on Write and Edit | Runs `bin/check-text.js` on a file that matches `deliverables.txt` and tells the session what it found. It never blocks. |
+| `weekly-cap.sh` | PreToolUse on every tool, and UserPromptSubmit | Once the week reaches the cap in `weekly-cap`, refuses every tool and every prompt until the weekly reset. The coordinator still takes a founder's prompt and answers without tools. |
 
 The guard drops each redirection with its target, cuts the command at `;`, `&`, `|`, parentheses and backticks, and reads it twice: with quotes dropped, and with each quoted word kept whole. A command with a substitution (`$(...)` or backticks) gets two more readings, with each substitution as one word, so `git push origin "$(git branch --show-current)" -f` still counts as a forced push. It blocks:
 
@@ -152,9 +158,17 @@ The launcher attaches the hooks through `--settings`, so your global settings st
 - the guard gets the role's kind;
 - the notice gets `$FM_HOME`, the role, its kind and its role file;
 - the pointer gets `$FM_HOME` and the role;
-- the one-send hook gets `$FM_HOME`, the role, the address and the grant.
+- the one-send hook gets `$FM_HOME`, the role, the address and the grant;
+- the tier hook gets the tier names;
+- the delegation log gets `$FM_HOME`, the role and the tier names;
+- the deliverable check gets `$FM_HOME`;
+- the weekly cap gets `$FM_HOME` and the kind.
 
-No hook takes its role, kind, home, address or grant from the environment, which a session can inherit from another process. Without their arguments the guard, the notice and the pointer do nothing, so they stay harmless in your user settings too, and the one-send hook refuses every call.
+No hook takes its role, kind, home, address or grant from the environment, which a session can inherit from another process. Without their arguments every hook but the one-send hook does nothing, so they stay harmless in your user settings too, and the one-send hook refuses every call. The isolated role gets none of the four subagent, deliverable and cap hooks.
+
+The deliverable check reads two files under `$FM_HOME` that `init` copies empty: `deliverables.txt`, one path pattern per line for the files that leave the company, and `forbidden-terms.tsv`, the names that must not appear in them. An `old-name` entry is a name the company no longer uses, and a finding prints it. A `confidential` entry is a name under NDA, and a finding prints neither the name nor the text around it. `bin/check-text.js` also flags em and en dashes, arrows, AI attribution lines and secrets. It reads `.md`, `.txt` and `.html`.
+
+The weekly cap needs two files under `$FM_HOME`: `weekly-cap`, with the cap as a whole percentage, and `state/usage.json`, a reading of the account's weekly meter (`{"seven_day": {"utilization": 81, "resets_at": <epoch seconds>}, "read_at": <epoch seconds>}`). Founder Mode ships no program that writes the reading: the meter that `/usage` shows has no documented API. Without both files, a reading under two hours old and a reset still ahead, the hook does nothing.
 
 Three switches outside the hooks turn them all off, the guard and the send gate included, as `--safe-mode` and `--bare` do. They are `disableAllHooks` in your user, project or local settings, and `CLAUDE_CODE_SAFE_MODE` or `CLAUDE_CODE_SIMPLE` in your shell. The launcher sets `disableAllHooks` to false in `--settings` and starts the session with both variables empty. It warns on stderr when your shell sets either variable or your user settings set `disableAllHooks`. A `disableAllHooks` in managed settings still wins.
 
@@ -164,9 +178,26 @@ Claude Code lets a call through when its hook can't start or times out, unless t
 
 `founder-mode stalled` lists the roles whose last conversation entry is an API error, such as a usage limit, and says whether each process is alive. It reads local files and costs no tokens. The coordinator's hook runs it on every prompt and names the live ones. After a reset, the coordinator wakes each with a message and asks a founder to resume the isolated role, which takes no messages. A closed session needs a relaunch.
 
-### The checker subagent
+### Subagent tiers
 
-`agents/checker.md` defines a subagent that runs tests, reads and greps, and reports facts with `path:line`. Its prompt forbids edits, commits and pushes. It keeps Bash to run tests; in a session the launcher started, the guard fires inside subagents too and blocks the publishing commands on its list, and nothing else stops a write. It starts without CLAUDE.md (`omitClaudeMd`) and with only the tools its file names, so a check skips the project file and the schemas of every other tool. It runs at `high` effort, because a subagent without its own `effort` takes the session's (2.1.303), and some roles run at `max`. Copy it to `~/.claude/agents/` or to a repository's `.claude/agents/`.
+A subagent without its own `model` and `effort` runs at the session's, and some roles run at `max`. `agents/` defines three tiers, each with its own model and `high` effort:
+
+| Tier | Model | Does | Never |
+|---|---|---|---|
+| `intern` | Haiku, without CLAUDE.md, `Read` and `Bash`, 30 turns | Counts, lists, greps, extracts fields, compares two files, runs a given command or test and returns evidence with `path:line` and exit codes | Draws conclusions, writes to a repository, uses the web |
+| `junior` | Sonnet, without CLAUDE.md, every tool but `Agent`, 80 turns | Read-heavy sweeps, web searches, inventories, internal drafts, code and tests | Makes a deliverable: the session that asked reviews what it writes and delivers it |
+| `senior` | Opus, with CLAUDE.md and every tool | Decides, writes deliverables and code, reviews | |
+
+A session starts with the lowest tier that can do the job and goes up one when a tier gets stuck. The intern and the junior skip CLAUDE.md and the schemas of the tools they don't have, so each request names its sources, the files it may touch, a cap on tool calls and every rule it needs; a junior told to work in a repository reads that repository's CLAUDE.md first. Their prompts forbid commits and pushes. They keep Bash, and in a session the launcher started the guard fires inside subagents too.
+
+`hooks/subagent-tier.sh` refuses general-purpose, Explore, Plan, a fork and a call without a type, since all of them run at the session's model and effort. `hooks/delegation-log.sh` logs each call to a tier. Once the session has checked the result, it marks the entry:
+
+```bash
+founder-mode delegations                                  # your unmarked calls (every role's, run from a terminal)
+founder-mode delegations 1a2b3c4d ok 'src/app.js:42'      # ok, invented, redone, escalated, refused or incomplete
+```
+
+Copy the three files to `~/.claude/agents/` or to a repository's `.claude/agents/`. A session already running doesn't see an agent file added after it started.
 
 ## Quick start
 
@@ -180,7 +211,7 @@ founder-mode init                       # templates into ~/.founder-mode; existi
 ${EDITOR:-nano} ~/.founder-mode/roles.tsv     # names, models, folders
 ${EDITOR:-nano} ~/.founder-mode/ORGCHART.md   # your founders, areas and rules
 mkdir -p ~/company/product ~/company/admin ~/outreach   # the folders roles.tsv names
-mkdir -p ~/.claude/agents && cp ~/founder-mode/agents/checker.md ~/.claude/agents/
+mkdir -p ~/.claude/agents && cp ~/founder-mode/agents/*.md ~/.claude/agents/
 FM_DRY_RUN=1 founder-mode coordinator   # read the command first
 founder-mode coordinator                # then one terminal per role
 ```
