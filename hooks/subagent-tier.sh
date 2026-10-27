@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Copyright 2026 RHerAle
 # SPDX-License-Identifier: Apache-2.0
+# Part of Founder Mode: https://github.com/RHerAle/FounderMode
 # PreToolUse hook on Agent. A subagent without a model of its own (general-purpose, Explore, Plan, a fork, or a call
 # without a type, which falls back to general-purpose) runs at the session's model and effort, so on a role at max it
 # costs as much as the session. The hook refuses those calls and names the tiers, which set their own model and

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Copyright 2026 RHerAle
 # SPDX-License-Identifier: Apache-2.0
+# Part of Founder Mode: https://github.com/RHerAle/FounderMode
 # founder-mode delegations [<id> <status> [note]]
 # Without an id, lists the subagent calls in state/delegations.tsv that carry no mark yet: the caller's own when
 # FM_ROLE is set, every role's otherwise. With an id and a status, appends a mark to state/delegation-marks.tsv. Both

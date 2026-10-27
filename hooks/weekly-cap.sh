@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Copyright 2026 RHerAle
 # SPDX-License-Identifier: Apache-2.0
+# Part of Founder Mode: https://github.com/RHerAle/FounderMode
 # PreToolUse hook on every tool, and UserPromptSubmit. Once the account's week reaches the cap in $FM_HOME/weekly-cap,
 # it refuses every tool call, a subagent's included, and every new prompt, until the weekly reset. The coordinator's
 # prompts still go through with a note, so a founder can still talk to it, and it answers without tools. With the cap

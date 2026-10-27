@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Copyright 2026 RHerAle
 // SPDX-License-Identifier: Apache-2.0
+// Part of Founder Mode: https://github.com/RHerAle/FounderMode
 // founder-mode stalled: sessions whose conversation ended on an API error, such as a usage limit or a dropped
 // connection. After a limit resets, not every session resumes on its own, so the coordinator wakes the ones still
 // stopped. It reads local files only and costs no tokens. --hook: live sessions only, on one line, for a hook.

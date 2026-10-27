@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Copyright 2026 RHerAle
 # SPDX-License-Identifier: Apache-2.0
+# Part of Founder Mode: https://github.com/RHerAle/FounderMode
 # UserPromptSubmit hook. A conversation keeps the prompt it started with, so an edit to ORGCHART.md or to the role
 # file after that point never reaches it: tell the session once, on its next prompt. For the coordinator, also name
 # the sessions stopped on an API error, so it wakes them once a usage limit resets.

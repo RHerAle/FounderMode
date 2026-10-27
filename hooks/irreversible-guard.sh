@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Copyright 2026 RHerAle
 # SPDX-License-Identifier: Apache-2.0
+# Part of Founder Mode: https://github.com/RHerAle/FounderMode
 # PreToolUse hook for Bash and Monitor, which both run shell commands. Stops the git, gh and docker commands on its
 # list that publish under a founder's name or can't be undone, and tells the session to ask a founder first. It
 # catches accidents: a session set on getting past it can hide a command from any pattern, so the hard stop for a

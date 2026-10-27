@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Copyright 2026 RHerAle
 # SPDX-License-Identifier: Apache-2.0
+# Part of Founder Mode: https://github.com/RHerAle/FounderMode
 # founder-mode: one long-lived Claude Code session per role, run like a small company.
 #
 #   founder-mode init                                  copy templates/ into $FM_HOME, never overwriting a file

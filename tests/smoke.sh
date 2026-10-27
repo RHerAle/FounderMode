@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Copyright 2026 RHerAle
 # SPDX-License-Identifier: Apache-2.0
+# Part of Founder Mode: https://github.com/RHerAle/FounderMode
 # Smoke test. Runs the launcher dry against a throwaway HOME, launches it against a stand-in claude, feeds the hooks
 # and the stalled-session report sample input, and runs the README's quick start in a clean home. It never starts the
 # real claude. Needs bash, jq and node, and runs shellcheck when it is installed.

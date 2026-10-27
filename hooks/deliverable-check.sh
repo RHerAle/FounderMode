@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Copyright 2026 RHerAle
 # SPDX-License-Identifier: Apache-2.0
+# Part of Founder Mode: https://github.com/RHerAle/FounderMode
 # PostToolUse hook on Write and Edit. When the file just written matches a pattern in $FM_HOME/deliverables.txt, it
 # runs bin/check-text.js on it with the terms in $FM_HOME/forbidden-terms.tsv and hands what it finds to the session
 # as context. It never blocks: the text is already on disk, and the session that delivers it decides. A program does

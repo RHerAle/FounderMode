@@ -278,9 +278,25 @@ Two plugins run in every session without being called, so a count of calls misse
 - **No scheduler.** You open each role in a terminal, and the coordinator relays work by message.
 - **Versions.** Claude Code 2.1.290 and 2.1.295 closed ways around `--restricted` and `--tools`, so the launcher checks `claude --version` before a real launch and refuses anything older than 2.1.295. Tested on Linux with bash 5.3.
 
+## Forks and variants
+
+Founder Mode is as much a template as a tool. If you adapt it to another kind of team, say a film crew or a hardware shop, and publish the result, please do three things. None of them is a condition of the licence.
+
+- Fork this repository on GitHub instead of copying the files. Your version then appears in the [list of forks](https://github.com/RHerAle/FounderMode/forks) and keeps the link back here.
+- Add the topic `founder-mode` to your repository, so that a search for the topic finds every variant, forked or not.
+- Open a pull request that adds one line to [VARIANTS.md](VARIANTS.md): the name of your variant, who it is for, and the link.
+
+Say where your version comes from, whatever you call it. This line near the top of your README is enough:
+
+> Based on [Founder Mode](https://github.com/RHerAle/FounderMode) by RHerAle (Apache License 2.0). This version: one sentence on what changed.
+
+The licence itself asks for less: keep the copyright lines and the NOTICE file, and mark the files you changed (section 4 of the Apache License).
+
 ## The name
 
 The name comes from Paul Graham's essay [Founder Mode](https://paulgraham.com/foundermode.html), September 2024. Here it means the founders keep the last word on everything a session can't undo.
+
+"Founder Mode" is the name of this project. Use it for unmodified copies and to say that your work is based on it. Give a modified version a name of its own, so that nobody takes your rules for these ones; "based on Founder Mode" in your README does the rest.
 
 Founder Mode is the name of this project and nothing more. It is not affiliated with Paul Graham or Y Combinator, nor with any company that uses the phrase as a trademark.
 
@@ -288,4 +304,4 @@ Founder Mode is the name of this project and nothing more. It is not affiliated 
 
 Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Copyright 2026 RHerAle.
 
-You can use Founder Mode in anything, including closed products, and you can copy and adapt the templates. If you redistribute a file from this repository, modified or not, keep its copyright line and the NOTICE file, and mark what you changed. If you send a contribution, you license it under the same terms (section 5 of the Apache License).
+You can use Founder Mode in anything, including closed products, and you can copy and adapt the templates. If you redistribute a file from this repository, modified or not, keep its copyright line and the NOTICE file, and mark what you changed. If you send a contribution, you license it under the same terms (section 5 of the Apache License). If you publish an adapted version, see [Forks and variants](#forks-and-variants).

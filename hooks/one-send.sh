@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Copyright 2026 RHerAle
 # SPDX-License-Identifier: Apache-2.0
+# Part of Founder Mode: https://github.com/RHerAle/FounderMode
 # PreToolUse hook on the one tool named by FM_SEND_TOOL. The launcher attaches it only when an isolated role starts
 # with FM_ONE_SEND=<address> and FM_SEND_TEXT=<file>: a founder grants one send per launch, of one approved text to one
 # address, and nothing the session reads can grant another. The launcher gives that launch its own grant id and copies

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Copyright 2026 RHerAle
 // SPDX-License-Identifier: Apache-2.0
+// Part of Founder Mode: https://github.com/RHerAle/FounderMode
 // check-text.js [--terms FILE] FILE...
 // Checks a text before it leaves the company: dashes and arrows, AI attribution lines, secrets, and the names in the
 // terms file. Reads .md, .txt and .html. In Markdown, code blocks and inline code don't count for dashes and arrows;

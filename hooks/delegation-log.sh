@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Copyright 2026 RHerAle
 # SPDX-License-Identifier: Apache-2.0
+# Part of Founder Mode: https://github.com/RHerAle/FounderMode
 # PostToolUse hook on Agent. It logs each call to a tier in $FM_HOME/state/delegations.tsv (time, role, tier, a short
 # id, the call's description) and tells the session the id. Once the session has checked what came back, it marks the
 # entry with founder-mode delegations <id> <status>. An entry without a mark stays pending, so a count of invented or

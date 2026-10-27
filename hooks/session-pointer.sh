@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Copyright 2026 RHerAle
 # SPDX-License-Identifier: Apache-2.0
+# Part of Founder Mode: https://github.com/RHerAle/FounderMode
 # SessionStart hook. /clear and /branch start a new conversation inside a running session, and the launcher writes
 # the role's conversation pointer (state/<role>.session) only at launch. Without this hook the next launch would
 # resume the conversation from before the /clear, and founder-mode stalled would watch it instead of the live one.
