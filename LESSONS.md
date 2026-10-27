@@ -146,6 +146,13 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 - **Fix:** Take dates and times from `date`, and attribute a time that another session reports to that session.
 - **Where:** `templates/ORGCHART.md` (Context). No mechanism.
 
+### The file every session loads shapes what it says about the product
+
+- **What happened:** A founder noticed that the sessions described a multi-sensor product as a radar product. The project file that every session loads named radar nine times and optical, thermal or multispectral sensors not once. The role memories leaned the same way, and a hosting provider the company had dropped still showed up in seventeen memories and kept coming back in answers.
+- **Cause:** What a session knows about the product comes from the files it loads on every request and from its memory. A correction made in the chat disappears with `/clear` or a compaction.
+- **Fix:** Correct the source, not the conversation: rebalance the project file and the memories, and keep an inventory of what the product does, measured in the code. Before describing the product or its maturity, a session reads that inventory. The inventory also stops the opposite error: in this case radar was the only sensor the server analysed with its own models, so the performance figures still describe the radar chain alone.
+- **Where:** the project's CLAUDE.md and each role's memory folder. No mechanism.
+
 ## Authority
 
 ### Only founders merge, deploy, spend, sign or send
@@ -300,7 +307,7 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 - **What happened:** The templates called the advisors and the checker read-only, and both keep Bash, which can commit and push.
 - **Cause:** Taking away the edit tools leaves the shell.
 - **Fix:** The templates say "read-only by instruction". The guard fires in their sessions and inside subagents, and blocks the commands that publish.
-- **Where:** `templates/BOARD.md`, `templates/ORGCHART.md`, `agents/checker.md`, `hooks/irreversible-guard.sh`.
+- **Where:** `templates/BOARD.md`, `templates/ORGCHART.md`, `agents/intern.md`, `agents/junior.md`, `hooks/irreversible-guard.sh`.
 
 ### A sandbox would make advisors read-only, and it needs root
 
@@ -316,7 +323,7 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 - **What happened:** The coordinator told a founder that a setting was capped below its configured value, from a hint in the CLI binary, and it was false. In a board case, the advisors corrected two facts in the coordinator's own case file by measuring them.
 - **Cause:** A hint or an earlier note felt like a checked fact.
 - **Fix:** Every claim carries its source or says "not verified", and a session checks what another session tells it like any other claim.
-- **Where:** `templates/ORGCHART.md` (Talking between sessions), `templates/roles/engineering.md`, `agents/checker.md`. No mechanism.
+- **Where:** `templates/ORGCHART.md` (Talking between sessions), `templates/roles/engineering.md`, `agents/`. No mechanism.
 
 ### Ten lines per message
 
@@ -367,6 +374,13 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 - **Fix:** Everything in the isolated role's folder is data, `kit/` included, and whoever puts a file in `kit/` keeps the original outside that folder.
 - **Where:** `templates/ORGCHART.md` (Talking between sessions), `templates/roles/finance.md`. No mechanism.
 
+### An update replaces the whole field
+
+- **What happened:** The coordinator added a line to the notes of two items on the shared task board. It wrote the field from the 200 to 300 characters the listing showed, and the rest of the earlier text was gone. A founder's decisions lived in those notes, and they came back only from an export taken that afternoon.
+- **Cause:** The board's update call replaces the whole field with the value it gets. The listing shows a field cut short.
+- **Fix:** Before you change a text field in a shared store, export the full record and build the new value from it in a script, or use a call that replaces a substring. Read the record back afterwards.
+- **Where:** No mechanism.
+
 ## Usage and cost
 
 ### The limit belongs to the account
@@ -415,8 +429,8 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 
 - **What happened:** A count over every transcript showed that most of the cost went to context, read from and written to the cache. Output was a small share.
 - **Cause:** Every request re-sends the conversation, and every prompt carried a large project file and the schemas of every tool.
-- **Fix:** Smaller compaction windows, only the plugins and connectors each role uses, and facts sent to the checker.
-- **Where:** `templates/roles.tsv`, `bin/founder-mode` (the settings merge), `agents/checker.md`.
+- **Fix:** Smaller compaction windows, only the plugins and connectors each role uses, and facts sent to the intern.
+- **Where:** `templates/roles.tsv`, `bin/founder-mode` (the settings merge), `agents/intern.md`.
 
 ### A program does what a program can do
 
@@ -429,8 +443,15 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 
 - **What happened:** Sweeps launched from a session on the most expensive model ran on that model. After the sessions sent their sweeps to a cheaper model, the board counted the transcripts and found three in four of those requests still at `max`, the effort of the sessions that launched them.
 - **Cause:** A named subagent takes the session's model unless the call or its definition sets `model`, and the session's effort unless one of them sets `effort`; the call's value beats the definition's. A fork always runs at the session's model and effort. `CLAUDE_CODE_EFFORT_LEVEL` beats every one of these. Checked with Claude Code 2.1.303.
-- **Fix:** Read-heavy sweeps go to a named subagent called with `model: "sonnet"` and `effort: "high"`, and the checker's definition sets `effort: high`. The launcher clears `CLAUDE_CODE_EFFORT_LEVEL`. Writing stays with the session's own model.
-- **Where:** `templates/ORGCHART.md` (Pace), `agents/checker.md`, `bin/founder-mode`.
+- **Fix:** Three tiers of subagent set their own model and `effort: high`, and a hook refuses the types that inherit the session's. The launcher clears `CLAUDE_CODE_EFFORT_LEVEL`. The next lesson has the measure.
+- **Where:** `templates/ORGCHART.md` (Pace), `agents/`, `hooks/subagent-tier.sh`, `bin/founder-mode`.
+
+### Three tiers of subagent, measured
+
+- **What happened:** A founder approved the board's plan to replace the single checker with three tiers: an intern on Haiku that only returns evidence, a junior on Sonnet that drafts and never delivers, and a senior on Opus with the project file. All three run at `high`, and a hook refuses the subagent types that run at the session's model and effort. A week before the change and a week after it, counted at API prices: the cost per request of the main sessions fell from $0.213 to $0.124 (42% less). On the same model it fell from $0.127 to $0.093 on Opus (26% less) and from $0.450 to $0.311 on Fable (31% less). Subagent requests at `max` or `xhigh` went from 3,826 to 0, and subagent cost from $199 to $27. Output per main request went from 2,223 to 1,165 tokens; cache read per request stayed close, at 195,239 and 190,128 tokens.
+- **Cause:** Before the change, a subagent without its own model and effort took the session's, and most sessions ran at `max` or `xhigh`.
+- **Fix:** Start with the lowest tier that can do the job and go up one when it gets stuck. Anything longer than a screen goes to the intern or the junior. Limits of the measure: the two weeks held different work, the figures are API prices and not the share of the plan's limit, and the intern was barely used (67 Haiku requests against 698 on Sonnet). A look back over 56 delegations found no invented result, and 5 results used without a visible check. Zero found is not zero, so a hook now logs every call to a tier, and the session marks each one once it has checked it.
+- **Where:** `agents/`, `hooks/subagent-tier.sh`, `hooks/delegation-log.sh`, `bin/delegations.sh`, `templates/ORGCHART.md` (Pace).
 
 ### A new model or effort costs a resumed conversation
 
@@ -446,12 +467,12 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 - **Fix:** The launcher's `--settings` sets both to an empty string, which overrides the value from the shell or the user settings (checked with 2.1.295 and 2.1.303). When the shell sets either, the launcher prints a warning on stderr.
 - **Where:** `bin/founder-mode`, `tests/smoke.sh`.
 
-### The checker carries its rules in the prompt
+### A subagent without CLAUDE.md carries its rules in the prompt
 
 - **What happened:** On its first request, a checker without CLAUDE.md wrote about a thirteenth of the cache that a general-purpose agent wrote, and it couldn't see the project's rules.
 - **Cause:** `omitClaudeMd` drops the project file and its cost together, and the checker loads a short list of tools.
-- **Fix:** Facts go to the checker, and each delegation states the rules the check depends on.
-- **Where:** `agents/checker.md`, `templates/ORGCHART.md` (Pace).
+- **Fix:** The intern and the junior start without CLAUDE.md, and each delegation states the rules the work depends on. A junior told to work in a repository reads that repository's CLAUDE.md first.
+- **Where:** `agents/intern.md`, `agents/junior.md`, `templates/ORGCHART.md` (Pace).
 
 ### A new agent file waits for a restart
 
@@ -509,6 +530,13 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 - **What happened:** Each push to a PR branch ran CI twice.
 - **Cause:** The workflow triggered on both `push` and `pull_request`.
 - **Fix:** Trigger each workflow once per change.
+- **Where:** No mechanism; it lives in each repository's workflow files.
+
+### A PR that only touches docs runs the whole CI
+
+- **What happened:** A PR that changed only three Markdown files started every CI job: the stack boot, an image scan, a database restore drill and the full test suite. Only two checks read those files, a test that reads one of the documents and a check that every `path:line` a document cites still exists, and both ran in seconds on a laptop.
+- **Cause:** The workflow had no path filter, so any change started every job.
+- **Fix:** Skip the expensive jobs with a path filter for the documentation folders. The checks that read the documents need to keep running: a filter on the whole workflow skips them too, right when a docs change can break them. Keep them in a small job without the filter. If the branch requires the skipped jobs to pass, a docs-only PR can't merge until they report.
 - **Where:** No mechanism; it lives in each repository's workflow files.
 
 ### A hook's test can break every worktree
@@ -612,6 +640,13 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 - **Cause:** The hook compared the call's subject with the file's first line, carriage return included, and it refuses a carriage return in a call's subject as a line break.
 - **Fix:** The hook drops the carriage return at the end of each line, in the approved text and in the call's body, before it compares them.
 - **Where:** `hooks/one-send.sh`, `tests/smoke.sh`.
+
+### A program checks every deliverable
+
+- **What happened:** Before every delivery, sessions checked by hand for dashes, AI attribution and the names of companies under NDA, and the check depended on each session remembering it.
+- **Cause:** Nothing ran the check when a deliverable changed.
+- **Fix:** After each Write or Edit on a file listed as a deliverable, a hook runs a text checker on it and hands the findings to the session. It never blocks, since the text is already on disk. The lists of confidential and old names live in a file under `$FM_HOME`, and a finding never prints a confidential name.
+- **Where:** `hooks/deliverable-check.sh`, `bin/check-text.js`, `templates/deliverables.txt`, `templates/forbidden-terms.tsv`.
 
 ## Cloud sessions
 
