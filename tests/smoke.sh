@@ -72,7 +72,7 @@ fi
 echo "# init"
 expect "init runs" "$FM" init
 for f in ORGCHART.md BOARD.md PR.md roles.tsv roles/advisor.md roles/design.md settings/outreach.json \
-  board/precedents.md deliverables.txt forbidden-terms.tsv; do
+  board/precedents.md deliverables.txt forbidden-terms.tsv sourced.txt; do
   expect "init wrote $f" test -f "$FM_HOME/$f"
 done
 echo "# edited" >> "$FM_HOME/ORGCHART.md"
@@ -558,12 +558,43 @@ o=$(ck "$D/names.md")
 expect "prints an old name" grep -qF 'line 1: [old name] Acme Old' <<<"$o"
 expect "hides a confidential name and its context" grep -qx "$D/names.md: line 2: \[confidential name\]" <<<"$o"
 expect "matches whole words only" lacks 'line 3' "$o"
+printf 'guess\tprobably\nguess\tpodría deberse\nsource-tag\tfuente:\n' >> "$FM_HOME/forbidden-terms.tsv"
+printf '%s\n' 'It is probably the mesh.' 'Esto podría deberse a la malla.' 'Use `probably` in code.' > "$D/guess.md"
+o=$(ck "$D/guess.md")
+expect "prints a guess" grep -qF 'line 1: [guess] probably' <<<"$o"
+expect "finds a guess with an accent" grep -qF 'line 2: [guess] podría deberse' <<<"$o"
+expect "a guess in Markdown code doesn't count" lacks 'line 3' "$o"
+printf '%s\n' '\section{Results}' '' \
+  'The drag coefficient of the chosen mesh is within one percent of the finest mesh in the study.' \
+  '% source: study.csv, rows 3 and 5' '' \
+  'The friction share grows with the mesh because the prism layers scale with the base size here.' '' \
+  'Este párrafo cita su fuente con la etiqueta en castellano y tiene palabras de sobra para contar.' \
+  '% fuente: estudio.pdf, p. 2' '' \
+  'Fine. % probably not' '' \
+  '\begin{thebibliography}{9}' '\bibitem{a} A. Author. A book. % source: book.pdf, p. 3' \
+  '\bibitem{b} B. Author. A book nobody opened.' '\end{thebibliography}' > "$D/report.tex"
+o=$(ck --sources "$D/report.tex")
+expect "a paragraph with its source passes" lacks 'line 3:' "$o"
+expect "flags a paragraph without a source" grep -qF 'line 6: [no source]' <<<"$o"
+expect "a source tag from the terms file counts" lacks 'line 8:' "$o"
+expect "a guess in a LaTeX comment doesn't count" lacks 'line 11:' "$o"
+expect "a heading needs no source" lacks 'line 1:' "$o"
+expect "a \\bibitem with its source passes" lacks 'line 14:' "$o"
+expect "flags a \\bibitem without a source" grep -qF 'line 15: [no source] \bibitem{b}' <<<"$o"
+expect "without --sources it skips sources" lacks 'no source' "$(ck "$D/report.tex")"
+printf '%s\n' '<!-- source: https://example.org/a.pdf, p. 4 -->' \
+  'This paragraph names its source in an HTML comment on the line above it, as Markdown allows.' > "$D/sourced.md"
+expect "an HTML comment carries the tag in Markdown" ck --sources "$D/sourced.md"
 expect "an unreadable file exits 2" exit2x ck "$D/missing.md"
 echo "$D/*.md" >> "$FM_HOME/deliverables.txt"
 expect "the hook reports on a deliverable" grep -qF 'confidential name' <<<"$(jq -cn --arg f "$D/names.md" '{tool_input: {file_path: $f}}' | "$ROOT/hooks/deliverable-check.sh" "$FM_HOME")"
 expect "and stays quiet on a clean one" test -z "$(jq -cn --arg f "$D/clean.md" '{tool_input: {file_path: $f}}' | "$ROOT/hooks/deliverable-check.sh" "$FM_HOME")"
 expect "and on a file outside the list" test -z "$(jq -cn --arg f "$D/bad.txt" '{tool_input: {file_path: $f}}' | "$ROOT/hooks/deliverable-check.sh" "$FM_HOME")"
 expect "without its argument it does nothing" test -z "$(jq -cn --arg f "$D/names.md" '{tool_input: {file_path: $f}}' | FM_HOME=$FM_HOME "$ROOT/hooks/deliverable-check.sh")"
+echo "$D/*.tex" >> "$FM_HOME/sourced.txt"
+o=$(jq -cn --arg f "$D/report.tex" '{tool_input: {file_path: $f}}' | "$ROOT/hooks/deliverable-check.sh" "$FM_HOME")
+expect "the hook checks sources in a file of sourced.txt" grep -qF 'no source' <<<"$o"
+expect "and says to check or delete, not soften" grep -qF 'or delete it' <<<"$o"
 
 echo "# weekly cap"
 now=$(date +%s)

@@ -647,3 +647,10 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 - **Cause:** Nothing ran the check when a deliverable changed.
 - **Fix:** After each Write or Edit on a file listed as a deliverable, a hook runs a text checker on it and hands the findings to the session. It never blocks, since the text is already on disk. The lists of confidential and old names live in a file under `$FM_HOME`, and a finding never prints a confidential name.
 - **Where:** `hooks/deliverable-check.sh`, `bin/check-text.js`, `templates/deliverables.txt`, `templates/forbidden-terms.tsv`.
+
+### A report names the source of each claim
+
+- **What happened:** A session wrote a team report from the team's files and added material of its own: a hypothesis about a cause, a conclusion nobody had checked, an acceptance criterion presented as the team's, a measurement taken on a screenshot and a citation to a book it hadn't opened. Its memory held the rule that every claim carries its source, and it applied the rule to what it said in chat, not to the file. A reviewer flagged the hypothesis, and the session softened it with "probably" instead of deleting it.
+- **Cause:** Nothing checked the file against the rule, and a softer word read like a fix.
+- **Fix:** The files in which every claim must name its source go in `sourced.txt`. After each write, the deliverable check flags every prose paragraph and every `\bibitem` without a source tag, and every word listed as a guess, and tells the session to check the claim or delete it. The tag names the file and page, or the URL, that the session opened.
+- **Where:** `hooks/deliverable-check.sh`, `bin/check-text.js`, `templates/sourced.txt`, `templates/forbidden-terms.tsv`.

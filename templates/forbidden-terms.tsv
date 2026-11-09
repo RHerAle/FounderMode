@@ -1,5 +1,7 @@
-# Names that must not appear in a deliverable. One per line: the kind, a tab, the term. Matched whole-word and
-# ignoring case. Kinds:
+# Terms the deliverable check looks for. One per line: the kind, a tab, the term. Matched whole-word and ignoring
+# case. Kinds:
 #   old-name       a name the company no longer uses; a finding prints it
 #   confidential   a name under NDA; a finding prints neither the term nor its context
+#   guess          a word that marks a claim nobody checked, such as probably or likely; a finding prints it
+#   source-tag     a tag that names a source in the files of sourced.txt, besides source:
 # Legal keeps the confidential entries.

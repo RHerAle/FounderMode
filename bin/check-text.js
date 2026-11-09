@@ -2,12 +2,18 @@
 // Copyright 2026 RHerAle
 // SPDX-License-Identifier: Apache-2.0
 // Part of Founder Mode: https://github.com/RHerAle/FounderMode
-// check-text.js [--terms FILE] FILE...
-// Checks a text before it leaves the company: dashes and arrows, AI attribution lines, secrets, and the names in the
-// terms file. Reads .md, .txt and .html. In Markdown, code blocks and inline code don't count for dashes and arrows;
-// every other rule reads them too. The terms file holds one term per line, after its kind and a tab:
+// check-text.js [--terms FILE] [--sources] FILE...
+// Checks a text before it leaves the company: dashes and arrows, AI attribution lines, secrets, the names in the
+// terms file and the words that mark a guess. Reads .md, .txt, .html and .tex. Code blocks and inline code in
+// Markdown, and comments in LaTeX, don't count for dashes, arrows and guesses; every other rule reads them too. The
+// terms file holds one term per line, after its kind and a tab:
 //   old-name<TAB>term       a name the company no longer uses; a finding prints it
 //   confidential<TAB>term   a name under NDA; a finding prints neither the term nor its context
+//   guess<TAB>term          a word that marks a claim nobody checked, such as "probably"; a finding prints it
+//   source-tag<TAB>tag      a tag that names a source, besides "source:"
+// With --sources, every prose paragraph, and every \bibitem in LaTeX, must carry a source tag, in a comment or in
+// the text. A prose paragraph is a block between blank lines, outside code, with at least MIN_WORDS words, whose first
+// line opens with none of a heading, a table, a quote, an HTML tag or a LaTeX command.
 // One finding per line of output. Exit 0 when clean, 1 with findings, 2 when a file can't be read.
 'use strict';
 const fs = require('node:fs');
@@ -20,6 +26,7 @@ const MARKS = {
   '⇔': 'arrow U+21D4', '➡': 'arrow U+27A1', '⮕': 'arrow U+2B95',
 };
 const CONTEXT = 50; // characters printed on each side of a finding
+const MIN_WORDS = 12; // a shorter block is a label or a caption, not a claim
 const esc = t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // A literal term, with word boundaries at its alphanumeric ends.
 const word = t => (/^\w/.test(t) ? '\\b' : '') + esc(t) + (/\w$/.test(t) ? '\\b' : '');
@@ -29,14 +36,26 @@ const RULES = [
   ['attribution', /\bCo-Authored-By\b|\bClaude-Session\b|\bGenerated with\b|claude\.ai\/code|noreply@anthropic\.com|\u{1F916}/giu, true, false],
   ['secret', /sk-ant-|ghp_|github_pat_|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY|xox[bp]-/g, true, true],
 ];
+// A kind in the terms file: [category, reads code too, hidden]
+const KINDS = {
+  'old-name': ['old name', true, false],
+  confidential: ['confidential name', true, true],
+  guess: ['guess', false, false],
+};
 
+// The rules and the source tags that the terms file adds.
 function terms(file) {
-  if (!file || !fs.existsSync(file)) return [];
-  return fs.readFileSync(file, 'utf8').split('\n').filter(l => l.trim() && !l.startsWith('#')).map(l => {
+  const rules = [], tags = ['source:'];
+  if (!file || !fs.existsSync(file)) return { rules, tags };
+  for (const l of fs.readFileSync(file, 'utf8').split('\n')) {
+    if (!l.trim() || l.startsWith('#')) continue;
     const [kind, term] = l.split('\t').map(x => (x || '').trim());
-    if (!term || !['old-name', 'confidential'].includes(kind)) throw new Error(`bad line in ${file}: kind<TAB>term`);
-    return [kind === 'old-name' ? 'old name' : 'confidential name', new RegExp(word(term), 'gi'), true, kind === 'confidential'];
-  });
+    if (term && kind === 'source-tag') { tags.push(term.toLowerCase()); continue; }
+    if (!term || !KINDS[kind]) throw new Error(`bad line in ${file}: kind<TAB>term`);
+    const [cat, code, hidden] = KINDS[kind];
+    rules.push([cat, new RegExp(word(term), 'gi'), code, hidden]);
+  }
+  return { rules, tags };
 }
 
 const unescape = t => t.replace(/&mdash;/g, '—').replace(/&ndash;/g, '–').replace(/&rarr;/g, '→')
@@ -44,10 +63,10 @@ const unescape = t => t.replace(/&mdash;/g, '—').replace(/&ndash;/g, '–').re
   .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
   .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)));
 
-// [line number, text, text with Markdown code blanked]
+// [line number, text, text with Markdown code or LaTeX comments blanked]
 function lines(file) {
-  if (!/\.(md|txt|html)$/.test(file)) throw new Error('only .md, .txt and .html');
-  const md = file.endsWith('.md'), html = !file.endsWith('.txt');
+  if (!/\.(md|txt|html|tex)$/.test(file)) throw new Error('only .md, .txt, .html and .tex');
+  const md = file.endsWith('.md'), tex = file.endsWith('.tex'), html = /\.(md|html)$/.test(file);
   let fence = false;
   return fs.readFileSync(file, 'utf8').split('\n').map((l, i) => {
     if (html) l = unescape(l);
@@ -56,14 +75,53 @@ function lines(file) {
       if (l.trimStart().startsWith('```')) { fence = !fence; mask = ''; }
       else if (fence) mask = '';
       else mask = l.replace(/`[^`]*`/g, m => ' '.repeat(m.length));
+    } else if (tex) {
+      mask = l.replace(/(^|[^\\])%.*$/, (m, p) => p + ' '.repeat(m.length - p.length));
     }
     return [i + 1, l, mask];
   });
 }
 
-function check(file, rules) {
-  const out = [];
-  for (const [n, text, mask] of lines(file)) {
+// The prose paragraphs, and the \bibitem entries in LaTeX, that carry no source tag.
+function unsourced(file, rows, tags) {
+  const out = [], md = file.endsWith('.md');
+  const tagged = t => { t = t.toLowerCase(); return tags.some(g => t.includes(g)); };
+  const want = `without ${tags.join(' or ')}`;
+  // In Markdown an HTML comment holds the tag and isn't prose.
+  const prose = r => (md ? r[2].replace(/<!--.*?-->/g, '') : r[2]);
+  let block = [];
+  const flush = () => {
+    const body = block.filter(r => prose(r).trim());
+    if (body.length && !/^\s*([#|<>\\]|```)/.test(prose(body[0]))
+        && (body.map(prose).join(' ').match(/\p{L}+/gu) || []).length >= MIN_WORDS
+        && !tagged(block.map(r => r[1]).join('\n')))
+      out.push(`${file}: line ${body[0][0]}: [no source] a paragraph ${want}`);
+    block = [];
+  };
+  for (const r of rows) {
+    if (r[1].trim()) block.push(r);
+    else flush();
+  }
+  flush();
+  if (!file.endsWith('.tex')) return out;
+  let item = null;
+  const close = () => {
+    if (item && !tagged(item.text)) out.push(`${file}: line ${item.n}: [no source] \\bibitem${item.key} ${want}`);
+    item = null;
+  };
+  for (const [n, text, mask] of rows) {
+    const m = mask.match(/\\bibitem(?:\[[^\]]*\])?(\{[^}]*\})?/);
+    if (m) { close(); item = { n, key: m[1] || '', text: text.slice(m.index) }; }
+    else if (item && /\\end\{thebibliography\}/.test(mask)) close();
+    else if (item) item.text += '\n' + text;
+  }
+  close();
+  return out;
+}
+
+function check(file, rules, tags, sources) {
+  const out = [], rows = lines(file);
+  for (const [n, text, mask] of rows) {
     for (const [cat, rx, code, hidden] of rules) {
       const seen = new Set();
       for (const m of (code ? text : mask).matchAll(rx)) {
@@ -75,18 +133,23 @@ function check(file, rules) {
       }
     }
   }
-  return out;
+  return sources ? out.concat(unsourced(file, rows, tags)) : out;
 }
 
 function main(argv) {
-  let termFile = null;
-  if (argv[0] === '--terms') { termFile = argv[1]; argv = argv.slice(2); }
-  let rules;
-  try { rules = RULES.concat(terms(termFile)); } catch (e) { console.log(e.message); return 2; }
+  let termFile = null, sources = false;
+  for (;;) {
+    if (argv[0] === '--terms') { termFile = argv[1]; argv = argv.slice(2); }
+    else if (argv[0] === '--sources') { sources = true; argv = argv.slice(1); }
+    else break;
+  }
+  let t;
+  try { t = terms(termFile); } catch (e) { console.log(e.message); return 2; }
+  const rules = RULES.concat(t.rules);
   let found = 0, unread = 0;
   for (const f of argv) {
     let r;
-    try { r = check(f, rules); } catch (e) { console.log(`${f}: can't read it (${e.code || e.message})`); unread++; continue; }
+    try { r = check(f, rules, t.tags, sources); } catch (e) { console.log(`${f}: can't read it (${e.code || e.message})`); unread++; continue; }
     r.forEach(x => console.log(x));
     found += r.length;
   }

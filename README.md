@@ -71,6 +71,7 @@ Most rules in this table came out of a real failure. The PR log works around a G
 | A one-time send grant | A founder wanted one email sent from the isolated session without handing it a send tool for good. |
 | Subagents come in three tiers, each with its own model and effort | Subagents took the model and effort of the session that launched them: in one week, 3,826 subagent requests ran at `max` or `xhigh`. |
 | A program checks every deliverable after each write | Sessions checked dashes, attribution and confidential names by hand before each delivery. |
+| Every claim in a report names its source | A session wrote its own guesses, a criterion nobody had set and a citation to a book it hadn't opened into a team report. The rule against unchecked claims was in its memory, and it applied it to chat only. |
 
 ## How it works
 
@@ -144,7 +145,7 @@ The mail tools reach every thread in the mailbox they connect to, so give Outrea
 | `one-send.sh` | PreToolUse on the send tool | Enforces a one-time send grant. |
 | `subagent-tier.sh` | PreToolUse on Agent | Refuses a subagent that would run at the session's model and effort (general-purpose, Explore, Plan, a fork or no type) and names the tiers. |
 | `delegation-log.sh` | PostToolUse on Agent | Logs each call to a tier in `state/delegations.tsv` and gives the session its id, for `founder-mode delegations` to mark once checked. |
-| `deliverable-check.sh` | PostToolUse on Write and Edit | Runs `bin/check-text.js` on a file that matches `deliverables.txt` and tells the session what it found. It never blocks. |
+| `deliverable-check.sh` | PostToolUse on Write and Edit | Runs `bin/check-text.js` on a file that matches `deliverables.txt` or `sourced.txt` and tells the session what it found. It never blocks. |
 | `weekly-cap.sh` | PreToolUse on every tool, and UserPromptSubmit | Once the week reaches the cap in `weekly-cap`, refuses every tool and every prompt until the weekly reset. The coordinator still takes a founder's prompt and answers without tools. |
 
 The guard drops each redirection with its target, cuts the command at `;`, `&`, `|`, parentheses and backticks, and reads it twice: with quotes dropped, and with each quoted word kept whole. A command with a substitution (`$(...)` or backticks) gets two more readings, with each substitution as one word, so `git push origin "$(git branch --show-current)" -f` still counts as a forced push. It blocks:
@@ -169,7 +170,9 @@ The launcher attaches the hooks through `--settings`, so your global settings st
 
 No hook takes its role, kind, home, address or grant from the environment, which a session can inherit from another process. Without their arguments every hook but the one-send hook does nothing, so they stay harmless in your user settings too, and the one-send hook refuses every call. The isolated role gets none of the four subagent, deliverable and cap hooks.
 
-The deliverable check reads two files under `$FM_HOME` that `init` copies empty: `deliverables.txt`, one path pattern per line for the files that leave the company, and `forbidden-terms.tsv`, the names that must not appear in them. An `old-name` entry is a name the company no longer uses, and a finding prints it. A `confidential` entry is a name under NDA, and a finding prints neither the name nor the text around it. `bin/check-text.js` also flags em and en dashes, arrows, AI attribution lines and secrets. It reads `.md`, `.txt` and `.html`.
+The deliverable check reads three files under `$FM_HOME` that `init` copies empty: `deliverables.txt`, one path pattern per line for the files that leave the company; `sourced.txt`, the same for the files in which every claim must name its source; and `forbidden-terms.tsv`, the terms to look for. An `old-name` entry is a name the company no longer uses, and a finding prints it. A `confidential` entry is a name under NDA, and a finding prints neither the name nor the text around it. A `guess` entry is a word that marks a claim nobody checked, such as "probably", and a finding prints it. `bin/check-text.js` also flags em and en dashes, arrows, AI attribution lines and secrets. It reads `.md`, `.txt`, `.html` and `.tex`.
+
+In a file of `sourced.txt`, every prose paragraph, and every `\bibitem` in LaTeX, must carry a source tag in a comment or in the text: `source:`, or a `source-tag` entry of `forbidden-terms.tsv`, then the file and page or the URL that the session opened. A prose paragraph is a block between blank lines with at least 12 words that opens with none of a heading, a table, a quote, an HTML tag or a LaTeX command, so captions, tables and the lists inside a LaTeX environment go unchecked. A tag proves nothing by itself: it says where to look. A guess written as a plain statement passes both checks.
 
 The weekly cap needs two files under `$FM_HOME`: `weekly-cap`, with the cap as a whole percentage, and `state/usage.json`, a reading of the account's weekly meter (`{"seven_day": {"utilization": 81, "resets_at": <epoch seconds>}, "read_at": <epoch seconds>}`). Founder Mode ships no program that writes the reading: the meter that `/usage` shows has no documented API. Without both files, a reading under two hours old and a reset still ahead, the hook does nothing.
 
