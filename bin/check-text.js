@@ -12,8 +12,9 @@
 //   guess<TAB>term          a word that marks an unchecked claim, such as "probably"; a finding prints it
 //   source-tag<TAB>tag      a tag that names a source, besides "source:"
 // With --sources, every prose paragraph, and every \bibitem in LaTeX, must carry a source tag, in a comment or in
-// the text. A prose paragraph is a block between blank lines, outside code, with at least MIN_WORDS words, whose first
-// line opens with none of a heading, a table, a quote, an HTML tag or a LaTeX command.
+// the text. A prose paragraph is a block between blank lines, outside code, with at least MIN_WORDS words. Headings
+// and LaTeX spacing commands at its top don't count; after them it opens with none of a table, a quote, an HTML tag
+// other than <p>, \item, or a LaTeX command that leaves no text, such as \begin or \caption.
 // One finding per line of output. Exit 0 when clean, 1 with findings, 2 when a file can't be read.
 'use strict';
 const fs = require('node:fs');
@@ -27,6 +28,10 @@ const MARKS = {
 };
 const CONTEXT = 50; // characters printed on each side of a finding
 const MIN_WORDS = 12; // below this, a block counts as a label or a caption
+// A LaTeX command with its arguments; an argument with nested braces stays in the text.
+const TEX_CMD = /\\[a-zA-Z@]+\*?(\s*\[[^\]]*\])*(\s*\{[^{}]*\})*/g;
+// LaTeX lines without text that a paragraph may follow with no blank line between: headings, labels and spacing.
+const TEX_LEAD = /^\s*\\((sub)*section|chapter|part|(sub)?paragraph|label|noindent|indent|par|(small|med|big)skip|vspace)\b/;
 const esc = t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // A literal term, with word boundaries at its alphanumeric ends.
 const word = t => (/^\w/.test(t) ? '\\b' : '') + esc(t) + (/\w$/.test(t) ? '\\b' : '');
@@ -84,18 +89,32 @@ function lines(file) {
 
 // The prose paragraphs, and the \bibitem entries in LaTeX, that carry no source tag.
 function unsourced(file, rows, tags) {
-  const out = [], md = file.endsWith('.md');
+  const out = [], md = file.endsWith('.md'), tex = file.endsWith('.tex');
   const tagged = t => { t = t.toLowerCase(); return tags.some(g => t.includes(g)); };
   const want = `without ${tags.join(' or ')}`;
   // In Markdown an HTML comment holds the tag and isn't prose.
   const prose = r => (md ? r[2].replace(/<!--.*?-->/g, '') : r[2]);
+  // How a line opens a paragraph: 'lead' (a heading or spacing, passed over), 'markup' (not prose) or 'prose'.
+  const opens = r => {
+    const t = prose(r);
+    if (tex) {
+      if (/^\s*\\([^a-zA-Z@]|(bib)?item\b)/.test(t)) return 'markup';
+      if (/\p{L}/u.test(t.replace(TEX_CMD, ' '))) return 'prose';
+      return TEX_LEAD.test(t) ? 'lead' : 'markup';
+    }
+    if (/^\s*(#|<h[1-6][\s>])/i.test(t)) return 'lead';
+    return /^\s*([|<>\\]|```)/.test(t.replace(/^\s*<p(\s[^>]*)?>/i, '')) ? 'markup' : 'prose';
+  };
+  const words = t => ((tex ? t.replace(/\\[a-zA-Z@]+/g, ' ') : t).match(/\p{L}+/gu) || []).length;
   let block = [];
   const flush = () => {
     const body = block.filter(r => prose(r).trim());
-    if (body.length && !/^\s*([#|<>\\]|```)/.test(prose(body[0]))
-        && (body.map(prose).join(' ').match(/\p{L}+/gu) || []).length >= MIN_WORDS
+    let i = 0;
+    while (i < body.length && opens(body[i]) === 'lead') i++;
+    const para = body.slice(i);
+    if (para.length && opens(para[0]) === 'prose' && words(para.map(prose).join(' ')) >= MIN_WORDS
         && !tagged(block.map(r => r[1]).join('\n')))
-      out.push(`${file}: line ${body[0][0]}: [no source] a paragraph ${want}`);
+      out.push(`${file}: line ${para[0][0]}: [no source] a paragraph ${want}`);
     block = [];
   };
   for (const r of rows) {

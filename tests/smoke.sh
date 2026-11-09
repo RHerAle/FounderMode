@@ -585,6 +585,24 @@ expect "without --sources it skips sources" lacks 'no source' "$(ck "$D/report.t
 printf '%s\n' '<!-- source: https://example.org/a.pdf, p. 4 -->' \
   'This paragraph names its source in an HTML comment on the line above it, as Markdown allows.' > "$D/sourced.md"
 expect "an HTML comment carries the tag in Markdown" ck --sources "$D/sourced.md"
+printf '%s\n' '\section{Results}\label{sec:results}' \
+  'The drag coefficient of the chosen mesh is within one percent of the finest mesh here.' '' \
+  '\noindent The friction share grows with the mesh because the prism layers scale with the base size.' '' \
+  '\citet{a} measured the same share on a coarser mesh with the same prism layers and base size.' '' \
+  '\begin{itemize}' '\item A list item with enough words to count as a paragraph if lists were prose here.' \
+  '\end{itemize}' '' '\begin{figure}' \
+  '\caption{A caption with enough words to count as a paragraph if captions were prose here.}' \
+  '\end{figure}' > "$D/lead.tex"
+o=$(ck --sources "$D/lead.tex")
+expect "flags a paragraph right under a heading" grep -qF 'line 2: [no source]' <<<"$o"
+expect "flags a paragraph that opens with \\noindent" grep -qF 'line 4: [no source]' <<<"$o"
+expect "flags a paragraph that opens with a command" grep -qF 'line 6: [no source]' <<<"$o"
+expect "skips the list and the caption" test "$(grep -c 'no source' <<<"$o")" = 3
+printf '%s\n' '## Results' 'The drag coefficient of the chosen mesh is within one percent of the finest mesh here.' > "$D/lead.md"
+expect "flags a Markdown paragraph right under a heading" grep -qF 'line 2: [no source]' <<<"$(ck --sources "$D/lead.md")"
+printf '%s\n' '<h2>Results</h2>' \
+  '<p>The friction share grows with the mesh because the prism layers scale with the base size.</p>' > "$D/lead.html"
+expect "flags an HTML paragraph in <p> under a heading" grep -qF 'line 2: [no source]' <<<"$(ck --sources "$D/lead.html")"
 expect "an unreadable file exits 2" exit2x ck "$D/missing.md"
 echo "$D/*.md" >> "$FM_HOME/deliverables.txt"
 expect "the hook reports on a deliverable" grep -qF 'confidential name' <<<"$(jq -cn --arg f "$D/names.md" '{tool_input: {file_path: $f}}' | "$ROOT/hooks/deliverable-check.sh" "$FM_HOME")"
