@@ -33,7 +33,7 @@ listed sourced.txt && src=--sources
 out=$(node "$(dirname "$0")/../bin/check-text.js" --terms "$home/forbidden-terms.tsv" ${src:+"$src"} "$f" 2>&1) && exit 0
 msg=$(printf 'check-text.js found problems in a deliverable (%s). Fix them before it goes out:\n%s' "$f" "$(head -n 15 <<<"$out")")
 if grep -qE '\[(guess|no source)\]' <<<"$out"; then
-  msg+=$'\nFor a guess or a claim without a source: check it against the source and tag it, or delete it. A softer word is still a guess.'
+  msg+=$'\nFor a guess or a claim without a source: check it against its source and tag it, or delete it. Don\'t reword it with a softer word.'
 fi
 jq -cn --arg m "$msg" '{hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: $m}}'
 exit 0

@@ -2,6 +2,6 @@
 # case. Kinds:
 #   old-name       a name the company no longer uses; a finding prints it
 #   confidential   a name under NDA; a finding prints neither the term nor its context
-#   guess          a word that marks a claim nobody checked, such as probably or likely; a finding prints it
+#   guess          a word that marks an unchecked claim, such as probably; a finding prints it
 #   source-tag     a tag that names a source in the files of sourced.txt, besides source:
 # Legal keeps the confidential entries.

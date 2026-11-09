@@ -9,7 +9,7 @@
 // terms file holds one term per line, after its kind and a tab:
 //   old-name<TAB>term       a name the company no longer uses; a finding prints it
 //   confidential<TAB>term   a name under NDA; a finding prints neither the term nor its context
-//   guess<TAB>term          a word that marks a claim nobody checked, such as "probably"; a finding prints it
+//   guess<TAB>term          a word that marks an unchecked claim, such as "probably"; a finding prints it
 //   source-tag<TAB>tag      a tag that names a source, besides "source:"
 // With --sources, every prose paragraph, and every \bibitem in LaTeX, must carry a source tag, in a comment or in
 // the text. A prose paragraph is a block between blank lines, outside code, with at least MIN_WORDS words, whose first
@@ -26,7 +26,7 @@ const MARKS = {
   '⇔': 'arrow U+21D4', '➡': 'arrow U+27A1', '⮕': 'arrow U+2B95',
 };
 const CONTEXT = 50; // characters printed on each side of a finding
-const MIN_WORDS = 12; // a shorter block is a label or a caption, not a claim
+const MIN_WORDS = 12; // below this, a block counts as a label or a caption
 const esc = t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // A literal term, with word boundaries at its alphanumeric ends.
 const word = t => (/^\w/.test(t) ? '\\b' : '') + esc(t) + (/\w$/.test(t) ? '\\b' : '');

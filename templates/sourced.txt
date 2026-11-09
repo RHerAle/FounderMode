@@ -1,8 +1,9 @@
-# Files in which every claim names its source: reports, papers, technical memos. After each Write or Edit on a file
-# whose path matches one of these patterns, hooks/deliverable-check.sh runs bin/check-text.js on it with --sources.
-# Every prose paragraph, and every \bibitem in LaTeX, must then carry a source tag in a comment or in the text: the
-# file and page, or the URL, that the session opened for it. "source:" always counts; add others as source-tag lines
-# in forbidden-terms.tsv. One bash pattern per line, absolute or starting with $FM_HOME; * crosses folders.
+# Files in which each claim names its source, such as reports and technical memos. After each Write or Edit on a
+# file whose path matches one of these patterns, hooks/deliverable-check.sh runs bin/check-text.js on it with
+# --sources. Each prose paragraph, and each \bibitem in LaTeX, then needs a source tag in a comment or in the text:
+# the file and page, or the URL, that the session opened for it. check-text.js accepts "source:" by default; add
+# other tags as source-tag lines in forbidden-terms.tsv. One bash pattern per line, absolute or starting with
+# $FM_HOME; * crosses folders.
 # In LaTeX:    % source: data/study.csv, rows 3 to 5
 # In Markdown: <!-- source: https://example.org/paper.pdf, p. 4 -->
 # Example: $FM_HOME/work/*/report-*.tex
