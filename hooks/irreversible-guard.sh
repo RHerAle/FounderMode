@@ -29,6 +29,13 @@ one=${one//\$\'/\'} one=${one//'${IFS}'/ } one=${one//'$IFS'/ }
 one=$(printf '%s' "$one" | tr -d "\"'\\\\")
 # A GraphQL query that starts on the line after query= belongs to that line.
 one=${one//query=$'\n'/query=}
+# Only a founder writes the mail unlocks and the order to send a text now, from their own terminal (hooks/founder-mail-gate.sh, hooks/outbound-gate.sh).
+# Checked before the readings drop redirections, which is how a command would write one, and on the raw text and the
+# reading without quotes, so founder-mail."unlock" counts too.
+if [[ $raw$one =~ (founder-mail\.(unlock|now)|outbound\.unlock) ]]; then
+  echo "Blocked by the founder-mode guard: no session reads or writes a mail unlock or a send-now order under \$FM_HOME/state. A topic that already went to the other founder, or an address or company that already got mail, goes out again only when a founder unlocks it from their own terminal." >&2
+  exit 2
+fi
 # foreach emits one character per step: a reduce that appends to an array copies it on every character, and a 100 KB
 # heredoc then held each call for 25 seconds.
 two=$(jq -r '.tool_input.command // empty | [foreach explode[] as $c ({q: null, e: false, o: null}; .o = null

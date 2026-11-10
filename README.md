@@ -117,7 +117,7 @@ The outreach role reads mail written by strangers. It runs with:
 - deny rules for every file that Claude Code loads by itself as instructions: `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md` and anything under `.claude/`, in any letter case. The launcher adds them, so no template edit drops them. A session that reads a file in a folder of its own tree loads that folder's instructions, and so does a plain `claude` started in a folder above;
 - no memory: `--restricted` turns off Claude Code's memory and CLAUDE.md, whatever `autoMemoryDirectory` says, so the role keeps its state in `log/`, which Finance reads too;
 - its role file as the whole prompt, without the org chart;
-- no hooks except the conversation pointer and the send grant below, so after you edit its role file, tell it what changed or relaunch it with `--new`.
+- no hooks except the conversation pointer and the mail gates below, so after you edit its role file, tell it what changed or relaunch it with `--new`.
 
 It takes no messages either: since Claude Code 2.1.290, a `--restricted` session opens no inbox. The other sessions reach it through files in its folder, and when a usage limit stops it, a founder resumes it in its window.
 
@@ -135,6 +135,10 @@ The approved text is a file you reviewed: the subject on its first line, the bod
 
 The mail tools reach every thread in the mailbox they connect to, so give Outreach a mailbox of its own.
 
+Every draft Outreach writes and every granted send pass `hooks/outbound-gate.sh`: one email per address and per company every 7 days, whatever the topic, no corrections, and no subject close to one that company got within 30 days, all logged in `state/outbound.tsv`. A grant lifts none of this; a line with the address or `@domain` that you add to `state/outbound.unlock` lifts it for one call. The gate watches `FM_DRAFT_TOOL`, the claude.ai Gmail draft tool by default.
+
+To let the sessions write to the other founder without asking, start Outreach with `FM_FOUNDER_MAIL='<address>' FM_SEND_TOOL='<send tool name>'`. A session runs `founder-mode mail <file> <topic>`, and `hooks/founder-mail-gate.sh` lets that exact text out once per topic, an hour after it was last written, at most five a day; a correction counts as a second email on its topic. You lift a topic with a line in `state/founder-mail.unlock`, or skip the hour for one file with its name in `state/founder-mail.now`.
+
 ### Hooks
 
 | Hook | Event | What it does |
@@ -143,6 +147,8 @@ The mail tools reach every thread in the mailbox they connect to, so give Outrea
 | `orgchart-notice.sh` | UserPromptSubmit | Tells a session, once, that the org chart or its role changed after its conversation started. For the coordinator it also names the live sessions stopped on an API error. |
 | `session-pointer.sh` | SessionStart | Keeps `state/<role>.session` on the conversation that runs, including the new one that `/clear` or `/branch` starts. It skips a resume, because the launcher already wrote that id. |
 | `one-send.sh` | PreToolUse on the send tool | Enforces a one-time send grant. |
+| `outbound-gate.sh` | PreToolUse and PostToolUse on the draft tool and a granted send | Once per address and per company a week, no corrections, no repeated subject within a month. |
+| `founder-mail-gate.sh` | PreToolUse and PostToolUse on the send tool, with `FM_FOUNDER_MAIL` | Sends what `founder-mode mail` left: one email per topic, an hour after it was written. |
 | `subagent-tier.sh` | PreToolUse on Agent | Refuses a subagent that would run at the session's model and effort (general-purpose, Explore, Plan, a fork or no type) and names the tiers. |
 | `delegation-log.sh` | PostToolUse on Agent | Logs each call to a tier in `state/delegations.tsv` and gives the session its id, for `founder-mode delegations` to mark once checked. |
 | `deliverable-check.sh` | PostToolUse on Write and Edit | Runs `bin/check-text.js` on a file that matches `deliverables.txt` or `sourced.txt` and tells the session what it found. It never blocks. |
@@ -163,12 +169,14 @@ The launcher attaches the hooks through `--settings`, so your global settings st
 - the notice gets `$FM_HOME`, the role, its kind and its role file;
 - the pointer gets `$FM_HOME` and the role;
 - the one-send hook gets `$FM_HOME`, the role, the address and the grant;
+- the outbound gate gets `pre` or `post`, `$FM_HOME` and `draft` or `send`;
+- the founder-mail gate gets `pre` or `post`, `$FM_HOME`, the address and the mail role's `kit/to-founder`;
 - the tier hook gets the tier names;
 - the delegation log gets `$FM_HOME`, the role and the tier names;
 - the deliverable check gets `$FM_HOME`;
 - the weekly cap gets `$FM_HOME` and the kind.
 
-No hook takes its role, kind, home, address or grant from the environment, which a session can inherit from another process. Without their arguments every hook but the one-send hook does nothing, so they stay harmless in your user settings too, and the one-send hook refuses every call. The isolated role gets none of the four subagent, deliverable and cap hooks.
+No hook takes its role, kind, home, address or grant from the environment, which a session can inherit from another process. Without their arguments every hook but the three mail gates does nothing, so they stay harmless in your user settings too, and the mail gates refuse every call. The isolated role gets none of the four subagent, deliverable and cap hooks.
 
 The deliverable check reads three files under `$FM_HOME` that `init` copies empty: `deliverables.txt`, one path pattern per line for the files that leave the company; `sourced.txt`, the same for the files in which every claim must name its source; and `forbidden-terms.tsv`, the terms to look for. An `old-name` entry is a name the company no longer uses, and a finding prints it. A `confidential` entry is a name under NDA, and a finding prints neither the name nor the text around it. A `guess` entry is a word that marks an unchecked claim, such as "probably", and a finding prints it. `bin/check-text.js` also flags em and en dashes, arrows, AI attribution lines and secrets. It reads `.md`, `.txt`, `.html` and `.tex`.
 

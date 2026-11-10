@@ -44,6 +44,9 @@ got=$(jq -r '[.tool_input | (.to, .cc, .bcc) | .. | strings | ascii_downcase
 [ "$(jq -r '.tool_input.subject // ""' <<<"$input")" = "$(head -n 1 "$approved" | sed $'s/\r$//')" ] \
   && [ "$(jq -r '.tool_input.body // ""' <<<"$input" | sed $'s/\r$//')" = "$(tail -n +2 "$approved" | sed -e $'s/\r$//' -e '/./,$!d')" ] \
   || deny "the subject or the body differs from the text a founder approved at launch."
+# A grant lifts none of the rules for mail outside the company. The outbound gate runs before the grant is taken, so
+# its refusal leaves the grant unused.
+"$(dirname "$(readlink -f "$0")")/outbound-gate.sh" pre "$home" send <<<"$input" || exit 2
 # noclobber turns the redirection into create-only, so two calls can't both take the grant.
 ( set -o noclobber; date > "$mark" ) 2>/dev/null \
   || deny "this launch's grant was used ($(cat "$mark" 2>/dev/null)). Another send needs a founder to relaunch with a new grant."

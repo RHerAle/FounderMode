@@ -641,6 +641,13 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 - **Fix:** The hook drops the carriage return at the end of each line, in the approved text and in the call's body, before it compares them.
 - **Where:** `hooks/one-send.sh`, `tests/smoke.sh`.
 
+### One topic, one email, an hour after writing it
+
+- **What happened:** A session sent the other founder two emails on the same topic two minutes apart. The second corrected a claim in the first, which the session had copied from another session's report without checking it. The founders had agreed the day before on one email per topic, and that rule lived in prose only. Writing twice about one thing to the other founder is serious; to a customer or a partner it is unforgivable.
+- **Cause:** Nothing compared a send with the ones before it, and nothing made a session wait between writing and sending.
+- **Fix:** Mail to the other founder carries a topic. `founder-mode mail` refuses a topic that already went out, a subject that corrects an earlier email and a subject close to a recent one under another topic. Its gate holds each text for an hour, and a second run on the same topic replaces the waiting text and restarts the hour. Mail outside the company, drafts and the one-send grant alike, reaches a person or a company once a week at most, with no corrections and no subject close to one that company got within a month. Only a line a founder writes under `$FM_HOME/state` lifts one of these limits, for one send. The guard blocks any command that names those files, and a deny rule keeps every role's file tools out of `state/`.
+- **Where:** `bin/founder-mail.sh`, `bin/mail-rules.sh`, `hooks/founder-mail-gate.sh`, `hooks/outbound-gate.sh`, `hooks/one-send.sh`, `hooks/irreversible-guard.sh`, `bin/founder-mode`, `tests/smoke.sh`.
+
 ### A program checks every deliverable
 
 - **What happened:** Before every delivery, sessions checked by hand for dashes, AI attribution and the names of companies under NDA, and the check depended on each session remembering it.

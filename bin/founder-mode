@@ -8,6 +8,7 @@
 #   founder-mode <role> [-r [id] | --new] [args]       open the role's session (extra claude flags: member roles only)
 #   founder-mode stalled [--hook]                      list sessions whose last entry is an API error
 #   founder-mode delegations [<id> <status> [note]]    list the subagent calls nobody has marked, or mark one
+#   founder-mode mail <file> <topic>                   leave a message for the other founder (bin/founder-mail.sh)
 #
 # FM_HOME           where the org chart, roles and state live (default ~/.founder-mode)
 # FM_DRY_RUN=1      print the claude command and change nothing
@@ -15,6 +16,9 @@
 # FM_UNLOCK=1       leave the irreversible-action guard out of this session (the launcher says so on stderr)
 # FM_ONE_SEND, FM_SEND_TOOL, FM_SEND_TEXT   let an isolated role send one message, once per launch: to that address,
 #                   with that tool, and with the subject and body in that file (subject on the first line)
+# FM_FOUNDER_MAIL   let the mail role, the first isolated role in roles.tsv, send to the other founder at that address
+#                   what founder-mode mail leaves (with FM_SEND_TOOL; not together with FM_ONE_SEND)
+# FM_DRAFT_TOOL     the isolated role's draft tool, which the outbound gate watches (default: the claude.ai Gmail one)
 set -euo pipefail
 
 FM_HOME=${FM_HOME:-$HOME/.founder-mode}
@@ -39,7 +43,7 @@ alive() {
 usage() {
   local roles=
   [ -f "$FM_HOME/roles.tsv" ] && roles=$(awk -F'\t' '!/^#/ && NF { printf "%s%s", s, $1; s = "|" }' "$FM_HOME/roles.tsv")
-  echo "usage: founder-mode init | stalled [--hook] | delegations [<id> <status> [note]] | ${roles:-<role>} [-r [id] | --new] [args]" >&2
+  echo "usage: founder-mode init | stalled [--hook] | delegations [<id> <status> [note]] | mail <file> <topic> | ${roles:-<role>} [-r [id] | --new] [args]" >&2
   exit 2
 }
 
@@ -54,8 +58,16 @@ init() {
   echo "founder-mode: $n new files in $FM_HOME (existing files kept). Edit roles.tsv and ORGCHART.md before the first launch."
 }
 
+# The mail role: the first isolated row of roles.tsv, as role and folder.
+mail_role() { [ -f "$FM_HOME/roles.tsv" ] && awk -F'\t' '!/^#/ && $6 == "isolated" { print $1 "\t" $5; exit }' "$FM_HOME/roles.tsv"; }
+
 for dep in jq node; do command -v "$dep" >/dev/null || die "needs $dep"; done
 case ${1:-} in
+  mail)
+    shift
+    IFS=$'\t' read -r _ md <<<"$(mail_role || true)"
+    [ -n "${md:-}" ] || die "mail needs an isolated role in $FM_HOME/roles.tsv to send it"
+    exec "$ROOT/bin/founder-mail.sh" "$FM_HOME" "$(folder "$md")/kit/to-founder" "$@" ;;
   init) init; exit 0 ;;
   stalled) shift; exec node "$ROOT/bin/stalled.js" "$@" ;;
   delegations) shift; exec "$ROOT/bin/delegations.sh" "$FM_HOME" "$@" ;;
@@ -164,15 +176,18 @@ fi
 sp=${sp//'$FM_HOME'/$FM_HOME}
 
 allowed=Write,Edit
-hooks='{}'
-fixed='{}'
+hooks='{}' gate='{}'
+# No role edits $FM_HOME/state with a file tool: it holds the approved send texts, the mail unlocks, the outbound log
+# and the launcher's own records, which the hooks and the founders write from a shell. An Edit rule covers Write and
+# NotebookEdit, and deny rules hold in bypass mode (tested with Claude Code 2.1.322).
+fixed=$(jq -cn --arg s "$FM_HOME/state/**" '{permissions: {deny: ["Edit(/\($s))"]}}')
 # Set here and not in a template, so no edit can drop it: the isolated role writes none of the files that Claude Code
 # loads by itself as instructions (CLAUDE.md, CLAUDE.local.md, AGENTS.md and anything under .claude/), in any letter
 # case, since a case-insensitive disk serves claude.md as CLAUDE.md.
-[ "$kind" = isolated ] && fixed=$(jq -cn '
+[ "$kind" = isolated ] && fixed=$(jq -cn --argjson f "$fixed" '
   def ci: explode | map([.] | implode | if test("[a-zA-Z]") then "[\(ascii_upcase)\(ascii_downcase)]" else . end) | add;
   ["CLAUDE.md", "CLAUDE.local.md", "AGENTS.md"] | map("**/" + ci) + ["**/" + (".claude" | ci) + "/**"]
-  | {permissions: {deny: [.[] as $p | "Edit(\($p))", "Write(\($p))"]}}')
+  | {permissions: {deny: ($f.permissions.deny + [.[] as $p | "Edit(\($p))", "Write(\($p))"])}}')
 # Claude Code ranks CLAUDE_CODE_EFFORT_LEVEL above --effort and any agent's or call's effort, and
 # CLAUDE_CODE_AUTO_COMPACT_WINDOW above --autocompact, so a value in the founder's shell or user settings would
 # override every row of roles.tsv. An empty value in --settings cancels it. disableAllHooks in the user, project or
@@ -206,6 +221,16 @@ case $kind in
           {matcher: "Write|Edit", hooks: [hook("deliverable-check.sh"; [$fm]) + {timeout: 30}]}]}}') ;;
 esac
 grant=''
+# Every draft the isolated role writes goes through the outbound gate: once per address and per company a week, no
+# corrections, no subject close to one the company got within a month.
+if [ "$kind" = isolated ]; then
+  draft=${FM_DRAFT_TOOL:-mcp__claude_ai_Gmail__create_draft}
+  [[ $draft =~ ^[A-Za-z0-9_-]+$ ]] || die "FM_DRAFT_TOOL must be the exact name of the draft tool"
+  gate=$(jq -n --arg m "$draft" --arg c "$h/outbound-gate.sh" --arg fm "$FM_HOME" \
+    '{hooks: {PreToolUse: [{matcher: $m, hooks: [{type: "command", command: $c, args: ["pre", $fm, "draft"], onFailure: "block"}]}],
+      PostToolUse: [{matcher: $m, hooks: [{type: "command", command: $c, args: ["post", $fm, "draft"]}]}]}}')
+fi
+[ -z "${FM_ONE_SEND:-}" ] || [ -z "${FM_FOUNDER_MAIL:-}" ] || die "FM_ONE_SEND and FM_FOUNDER_MAIL gate the same tool; launch with one of them"
 if [ -n "${FM_ONE_SEND:-}" ]; then
   [ "$kind" = isolated ] || die "FM_ONE_SEND only applies to an isolated role"
   # A plain name, so the hook matcher reads it as one exact tool and not as a pattern.
@@ -221,8 +246,20 @@ if [ -n "${FM_ONE_SEND:-}" ]; then
   allowed+=,$FM_SEND_TOOL
   hooks=$(jq -n --arg m "$FM_SEND_TOOL" --arg c "$h/one-send.sh" --arg fm "$FM_HOME" --arg r "$role" \
     --arg to "$FM_ONE_SEND" --arg g "$grant" \
+    --arg o "$h/outbound-gate.sh" \
     '{hooks: {PreToolUse: [{matcher: $m,
-      hooks: [{type: "command", command: $c, args: [$fm, $r, $to, $g], onFailure: "block"}]}]}}')
+      hooks: [{type: "command", command: $c, args: [$fm, $r, $to, $g], onFailure: "block"}]}],
+      PostToolUse: [{matcher: $m, hooks: [{type: "command", command: $o, args: ["post", $fm, "send"]}]}]}}')
+fi
+if [ -n "${FM_FOUNDER_MAIL:-}" ]; then
+  [ "$kind" = isolated ] && [ "$role" = "$(mail_role | cut -f1)" ] \
+    || die "FM_FOUNDER_MAIL only applies to the mail role, the first isolated role in roles.tsv"
+  [[ ${FM_SEND_TOOL:-} =~ ^[A-Za-z0-9_-]+$ ]] || die "FM_FOUNDER_MAIL needs FM_SEND_TOOL, the exact name of the send tool"
+  allowed+=,$FM_SEND_TOOL
+  hooks=$(jq -n --arg m "$FM_SEND_TOOL" --arg c "$h/founder-mail-gate.sh" --arg fm "$FM_HOME" --arg to "$FM_FOUNDER_MAIL" \
+    --arg k "$dir/kit/to-founder" \
+    '{hooks: {PreToolUse: [{matcher: $m, hooks: [{type: "command", command: $c, args: ["pre", $fm, $to, $k], onFailure: "block"}]}],
+      PostToolUse: [{matcher: $m, hooks: [{type: "command", command: $c, args: ["post", $fm, $to, $k]}]}]}}')
 fi
 
 # One --settings value: the memory folder, settings/all.json (not for the isolated role), settings/<role file>.json,
@@ -236,7 +273,7 @@ settings=$(jq -cs 'def m($a; $b): if ($a | type) == "object" and ($b | type) == 
     elif ($a | type) == "array" and ($b | type) == "array" then $a + $b
     elif $b == null then $a else $b end;
   reduce .[] as $x ({}; m(.; $x))' \
-  <(jq -n --arg m "$mem" '{autoMemoryDirectory: $m}') ${extra[@]+"${extra[@]}"} <(echo "$pointer") <(echo "$hooks") \
+  <(jq -n --arg m "$mem" '{autoMemoryDirectory: $m}') ${extra[@]+"${extra[@]}"} <(echo "$pointer") <(echo "$hooks") <(echo "$gate") \
   <(echo "$fixed") <(echo "$cleared")) || die "a file under $FM_HOME/settings is not valid JSON"
 
 flags=(-n "$name" --model "$model" --effort "$effort" --autocompact "$compact")
@@ -266,6 +303,9 @@ env=(FM_HOME="$FM_HOME" FM_ROLE="$role" CLAUDE_CODE_SAFE_MODE= CLAUDE_CODE_SIMPL
 if [ -n "$grant" ]; then
   # An export left in a terminal would grant a send on every launch from it, so the launcher says so each time.
   echo "founder-mode: FM_ONE_SEND grants $name one send to $FM_ONE_SEND, with the text in $FM_SEND_TEXT" >&2
+fi
+if [ -n "${FM_FOUNDER_MAIL:-}" ]; then
+  echo "founder-mode: FM_FOUNDER_MAIL lets $name send to $FM_FOUNDER_MAIL the texts that founder-mode mail leaves" >&2
 fi
 if [ "$unlock" = 1 ]; then
   # An export left in a terminal would lift the guard for every launch from it, so the launcher says so each time.

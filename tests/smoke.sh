@@ -13,7 +13,8 @@ trap 'rm -rf "$T"' EXIT
 export HOME=$T/user FM_HOME=$T/user/.founder-mode
 unset CLAUDE_CONFIG_DIR CLAUDE_CODE_DISABLE_AGENT_VIEW CLAUDE_CODE_EFFORT_LEVEL CLAUDE_CODE_AUTO_COMPACT_WINDOW \
   CLAUDE_CODE_SAFE_MODE CLAUDE_CODE_SIMPLE \
-  FM_COMPACT FM_UNLOCK FM_ONE_SEND FM_SEND_TOOL FM_SEND_TEXT FM_ROLE FM_KIND FM_ROLE_FILE FM_GRANT FM_DRY_RUN
+  FM_COMPACT FM_UNLOCK FM_ONE_SEND FM_SEND_TOOL FM_SEND_TEXT FM_ROLE FM_KIND FM_ROLE_FILE FM_GRANT FM_DRY_RUN \
+  FM_FOUNDER_MAIL FM_DRAFT_TOOL
 P=$HOME/.claude/projects/some-folder
 mkdir -p "$HOME/.claude/sessions" "$P" "$HOME/company/product" "$HOME/company/admin" "$HOME/outreach"
 
@@ -57,7 +58,7 @@ as_hook() {
   c=$(jq -r --arg e "$2" '.hooks[$e][0].hooks[0].command' <<<"$1")
   while IFS= read -r x; do argv+=("$x"); done < <(jq -r --arg e "$2" '.hooks[$e][0].hooks[0].args[]' <<<"$1")
   env -i PATH="$PATH" HOME="$HOME" FM_HOME="${ENV_HOME:-$T/elsewhere}" FM_ROLE=other FM_KIND="${KIND:-coordinator}" \
-    FM_ROLE_FILE="$T/other.md" FM_UNLOCK=1 FM_ONE_SEND=eve@evil FM_GRANT=0000 "$c" ${argv[@]+"${argv[@]}"} <<<"$3"
+    FM_ROLE_FILE="$T/other.md" FM_UNLOCK=1 FM_ONE_SEND=eve@evil FM_FOUNDER_MAIL=eve@evil FM_GRANT=0000 "$c" ${argv[@]+"${argv[@]}"} <<<"$3"
 }
 
 echo "# syntax"
@@ -244,8 +245,17 @@ expect "isolated gets settings/outreach.json" jq -e '.permissions.allow | index(
 expect "isolated asks for no messages" jq -e '.crossSessionInbound == null' <<<"$s"
 expect "isolated clears the effort and window variables too" jq -e --argjson c "$cleared" '.env == $c' <<<"$s"
 expect "and its send gate can't be switched off" jq -e '.disableAllHooks == false' <<<"$s"
-expect "isolated has only the pointer hook without a send grant" \
-  jq -e '(.hooks | keys) == ["SessionStart"] and .hooks.SessionStart[0].hooks[0].args[1] == "outreach"' <<<"$s"
+expect "without a send grant, isolated has the pointer hook and the outbound gate on its drafts" \
+  jq -e '(.hooks | keys) == ["PostToolUse", "PreToolUse", "SessionStart"] and .hooks.SessionStart[0].hooks[0].args[1] == "outreach"' <<<"$s"
+expect "the outbound gate watches the draft tool in Pre, blocking when it can't run, and in Post" \
+  jq -e --arg c "$ROOT/hooks/outbound-gate.sh" --arg h "$FM_HOME" '
+    (.hooks.PreToolUse[0] | .matcher == "mcp__claude_ai_Gmail__create_draft" and .hooks[0].command == $c
+      and .hooks[0].args == ["pre", $h, "draft"] and .hooks[0].onFailure == "block")
+    and (.hooks.PostToolUse[0] | .matcher == "mcp__claude_ai_Gmail__create_draft" and .hooks[0].args == ["post", $h, "draft"])' <<<"$s"
+for r in engineering coordinator advisor1 outreach; do
+  expect "$r edits nothing under \$FM_HOME/state" jq -e --arg d "Edit(/$FM_HOME/state/**)" '.permissions.deny | index($d)' \
+    <<<"$(dump "$r" | arg --settings)"
+done
 expect "isolated writes no instruction file, in any case" jq -e '.permissions.deny as $d
   | ["[Cc][Ll][Aa][Uu][Dd][Ee].[Mm][Dd]", "[Cc][Ll][Aa][Uu][Dd][Ee].[Ll][Oo][Cc][Aa][Ll].[Mm][Dd]",
      "[Aa][Gg][Ee][Nn][Tt][Ss].[Mm][Dd]", ".[Cc][Ll][Aa][Uu][Dd][Ee]/**"]
@@ -264,6 +274,9 @@ expect "and the send waits when that hook can't start, fails or times out" \
 expect "the send hook gets FM_HOME, the role, the address and the grant" jq -e --arg c "$ROOT/hooks/one-send.sh" --arg h "$FM_HOME" \
   '.hooks.PreToolUse[0].hooks[0] | .command == $c and (.args | length == 4 and .[0] == $h and .[1] == "outreach"
     and .[2] == "buyer@example" and (.[3] | test("^[0-9a-f-]{36}$")))' <<<"$(arg --settings < "$T/send")"
+expect "and logs each granted send in the outbound log" jq -e --arg c "$ROOT/hooks/outbound-gate.sh" --arg h "$FM_HOME" \
+  '.hooks.PostToolUse | map(select(.matcher == "mcp__mail__send")) | .[0].hooks[0] | .command == $c and .args == ["post", $h, "send"]' \
+  <<<"$(arg --settings < "$T/send")"
 expect "a send grant pre-approves that tool" grep -qF ',mcp__mail__send' <<<"$(arg --allowed-tools < "$T/send")"
 refuse "a send grant needs the isolated role" "only applies" env FM_ONE_SEND=buyer@example FM_SEND_TOOL=x FM_DRY_RUN=1 "$FM" finance
 refuse "a send grant needs a plain tool name" "FM_SEND_TOOL" env FM_ONE_SEND=buyer@example FM_SEND_TOOL='mcp__.*' FM_DRY_RUN=1 "$FM" outreach
@@ -507,6 +520,154 @@ expect "and so does a body sent with CRLF" sendas 0a21 \
 expect "refuses without its arguments, whatever its environment holds" exit2 env FM_HOME="$FM_HOME" FM_ROLE=outreach \
   FM_ONE_SEND=buyer@example FM_GRANT=0a1f "$ROOT/hooks/one-send.sh" <<<'{"tool_input":{"to":"buyer@example","subject":"s","body":"b"}}'
 expect "refuses a grant without its launch id" exit2 sendas '' '{"tool_input":{"to":"buyer@example","subject":"s","body":"b"}}'
+
+echo "# mail to the other founder"
+box=$FM_HOME/state/founder-mail tofounder=$(cd "$HOME/outreach" && pwd -P)/kit/to-founder W=$T/mail
+mkdir -p "$W"
+fresh() { rm -rf "$box" "$tofounder" "$FM_HOME/state/founder-mail.unlock"; }
+# note FILE SUBJECT [BODY]: a message signed by the Finance session.
+note() { printf '%s\n' "$2" '' "${3:-The numbers for Monday.}" '' 'Finance' > "$W/$1"; }
+fmail() { "$FM" mail "$@"; }
+# fgate MODE FILE [CC]: the gate's answer to the call that sends that waiting text.
+fgate() {
+  local f=$box/pending/$2; [ -f "$f" ] || f=$W/$2
+  jq -cn --arg s "$(head -n 1 "$f")" --arg b "$(tail -n +3 "$f")" --arg cc "${3:-}" \
+    '{tool_input: ({to: "partner@example", subject: $s, body: $b} + if $cc != "" then {cc: $cc} else {} end)}' \
+    | "$ROOT/hooks/founder-mail-gate.sh" "$1" "$FM_HOME" partner@example "$tofounder"
+}
+fsend() { fgate pre "$@" 2>/dev/null; }
+aged() { touch -d '61 minutes ago' "$box/pending/${1%.md}.topic"; }
+fresh; note a.md 'Monday numbers for the board'
+refuse "mail needs a topic" "usage" fmail "$W/a.md"
+for t in Monday ab -monday 'two words' "$(printf 'a%.0s' {1..41})"; do refuse "refuses the topic '$t'" "bad topic" fmail "$W/a.md" "$t"; done
+printf '%s\n' 'Subject' '' 'Body' > "$W/unsigned.md"
+refuse "a message names the session that wrote it" "names the session" fmail "$W/unsigned.md" unsigned
+expect "a valid topic leaves the text waiting" fmail "$W/a.md" monday-numbers
+expect "with its topic beside it, not in it" test "$(cat "$box/pending/a.topic")" = monday-numbers -a "$(cmp "$W/a.md" "$box/pending/a.md" && echo same)" = same
+expect "and a copy in the mail role's kit" cmp -s "$W/a.md" "$tofounder/a.md"
+refuse "the gate holds a fresh text for an hour" "60 to go" fgate pre a.md
+note a2.md 'Monday numbers for the board, checked' 'The numbers for Monday, checked.'
+expect "the same topic while it waits replaces the text" fmail "$W/a2.md" monday-numbers
+expect "and drops the old text, topic and kit copy" test ! -e "$box/pending/a.md" -a ! -e "$box/pending/a.topic" -a ! -e "$tofounder/a.md"
+refuse "the replaced text no longer sends" "matches no text" fgate pre a.md
+refuse "and the wait starts again" "60 to go" fgate pre a2.md
+echo a2.md > "$FM_HOME/state/founder-mail.now"
+expect "a founder's order to send now skips the wait" fsend a2.md
+refuse "and covers no other text" "matches no text" fgate pre a.md
+rm "$FM_HOME/state/founder-mail.now"
+aged a2.md
+expect "after the wait it sends" fsend a2.md
+refuse "with a copy to anyone, it doesn't" "no copies" fgate pre a2.md eve@example
+fgate post a2.md
+expect "the post hook logs four columns, the topic last" test "$(awk -F'\t' '{ print NF "|" $4 }' "$box/sent.tsv")" = '4|monday-numbers'
+expect "and archives the text and drops the kit copy" test -z "$(ls "$box/pending")" -a ! -e "$tofounder/a2.md"
+note b.md 'Something else about the budget' 'New body.'
+refuse "a topic that went out is refused" "Only a founder unlocks it" fmail "$W/b.md" monday-numbers
+cp "$W/b.md" "$box/pending/b.md"; echo monday-numbers > "$box/pending/b.topic"; aged b.md
+refuse "and so is a text slipped into pending by hand" "already went" fgate pre b.md
+rm "$box/pending/b.md" "$box/pending/b.topic"
+printf '%s\n' other-topic monday-numbers > "$FM_HOME/state/founder-mail.unlock"
+expect "a founder's unlock line lets it through once" fmail "$W/b.md" monday-numbers
+aged b.md
+expect "past the gate too" fsend b.md
+echo b.md > "$FM_HOME/state/founder-mail.now"
+fgate post b.md
+expect "and the order to send now, if any" test ! -s "$FM_HOME/state/founder-mail.now"
+expect "the send uses that line up and keeps the others" test "$(cat "$FM_HOME/state/founder-mail.unlock")" = other-topic
+note c.md 'A third thing with no relation' 'Body three.'
+refuse "then it is refused again" "went out" fmail "$W/c.md" monday-numbers
+fresh
+printf '%s\told.md\tYearly budget for the company\n' "$(date -d '2 days ago' '+%F %T')" > "$box/sent.tsv" 2>/dev/null \
+  || { mkdir -p "$box"; printf '%s\told.md\tYearly budget for the company\n' "$(date -d '2 days ago' '+%F %T')" > "$box/sent.tsv"; }
+note d.md 'Test calendar for the radar' 'Body.'
+expect "an old three-column row doesn't block a new topic" fmail "$W/d.md" test-calendar
+aged d.md
+expect "and the gate reads it" fsend d.md
+note e.md 'Yearly budget for the company, revised'
+refuse "a subject close to an old row's is the same topic" "too close" fmail "$W/e.md" budget
+for s in 'Correction: Monday numbers' 'This replaces my earlier note' 'Errata in the table' 'One thing I forgot' 'I was wrong about the date'; do
+  note f.md "$s"; refuse "refuses a correction: $s" "corrects an earlier email" fmail "$W/f.md" new-topic
+done
+note f.md 'Monday plan' $'Hello.\nI FORGOT one thing in the last one.'
+refuse "and one in the body's second line" "corrects" fmail "$W/f.md" new-topic
+note f.md 'Monday plan' $'One.\nTwo.\nThree.\nFour: better than the previous one.'
+expect "a word on the body's fourth line doesn't count" fmail "$W/f.md" new-topic
+printf '%s\tx.md\tNotes from the partner call\tpartner-notes\n' "$(date -d '2 days ago' '+%F %T')" >> "$box/sent.tsv"
+printf '%s\ty.md\tPricing sheet for the pilot\tpricing\n' "$(date -d '8 days ago' '+%F %T')" >> "$box/sent.tsv"
+note g.md 'Partner call notes: summary'
+refuse "a subject close to one sent 2 days ago, under another topic" "too close" fmail "$W/g.md" call-summary
+note g.md 'Pricing sheet for the pilot, part two'
+expect "one sent 8 days ago doesn't count" fmail "$W/g.md" pricing-two
+note h.md 'Pricing sheet for pilot: part two'
+refuse "a subject close to a waiting one under another topic" "run this with pricing-two" fmail "$W/h.md" pricing-three
+for x in 1 2 3 4 5; do printf '%s\tv%s.md\tOld subject %s\n' "$(date '+%F %T')" "$x" "$x" >> "$box/sent.tsv"; done
+aged g.md
+refuse "the gate keeps the cap of 5 a day" "cap 5" fgate pre g.md
+refuse "without its arguments the gate refuses" "not started by founder-mode" "$ROOT/hooks/founder-mail-gate.sh" <<<'{"tool_input":{}}'
+d=$(FM_FOUNDER_MAIL=partner@example FM_SEND_TOOL=mcp__mail__send dump outreach 2>"$T/fm.err" | arg --settings)
+expect "FM_FOUNDER_MAIL is announced" grep -qF 'send to partner@example' "$T/fm.err"
+expect "and hooks the send tool in Pre, blocking when it can't run, and in Post" jq -e --arg c "$ROOT/hooks/founder-mail-gate.sh" \
+  --arg h "$FM_HOME" --arg k "$tofounder" '
+  (.hooks.PreToolUse | map(select(.matcher == "mcp__mail__send")) | .[0].hooks[0]
+    | .command == $c and .args == ["pre", $h, "partner@example", $k] and .onFailure == "block")
+  and (.hooks.PostToolUse | map(select(.matcher == "mcp__mail__send")) | .[0].hooks[0].args == ["post", $h, "partner@example", $k])' <<<"$d"
+refuse "FM_FOUNDER_MAIL needs the mail role" "only applies to the mail role" env FM_FOUNDER_MAIL=p@example FM_SEND_TOOL=x FM_DRY_RUN=1 "$FM" finance
+refuse "and a send tool" "FM_SEND_TOOL" env FM_FOUNDER_MAIL=p@example FM_DRY_RUN=1 "$FM" outreach
+refuse "and refuses FM_ONE_SEND in the same launch" "with one of them" env FM_FOUNDER_MAIL=p@example FM_ONE_SEND=b@example \
+  FM_SEND_TOOL=x FM_SEND_TEXT="$T/approved.txt" FM_DRY_RUN=1 "$FM" outreach
+for c in "echo monday >> $FM_HOME/state/founder-mail.unlock" "printf 'x\n'>$FM_HOME/state/founder-mail.unlock" \
+  "cat $FM_HOME/state/outbound.unlock" "echo a.md > $FM_HOME/state/founder-mail.now" "cd $FM_HOME/state && tee -a founder-mail.\"unlock\" <<< x" \
+  $'echo x \\\n >> '"$FM_HOME/state/outbound.unlock"; do
+  expect "the guard blocks: $c" blocked "$c"
+done
+expect "and lets founder-mode mail run" guard 'founder-mode mail note.md monday-numbers'
+
+echo "# outbound gate"
+og() { "$ROOT/hooks/outbound-gate.sh" "$1" "$FM_HOME" "${2:-draft}"; }
+# draft TO SUBJECT [BODY] [CC]: the draft call the mail role would make.
+draft() { jq -cn --arg t "$1" --arg s "$2" --arg b "${3:-Hello.}" --arg cc "${4:-}" \
+  '{tool_input: ({to: [$t], subject: $s, body: $b} + if $cc != "" then {cc: [$cc]} else {} end)}'; }
+dpass() { draft "$@" | og pre 2>/dev/null; }
+dlog() { draft "$@" | og post; }
+row() { printf '%s\t%s\t%s\t%s\tdraft\n' "$(date -d "$1 days ago" '+%F %T')" "$2" "${2#*@}" "$3" >> "$FM_HOME/state/outbound.tsv"; }
+outfresh() { rm -f "$FM_HOME/state/outbound.tsv" "$FM_HOME/state/outbound.unlock"; }
+outfresh
+expect "a first draft to an address passes" dpass ann@acme.example 'Pilot proposal'
+dlog ann@acme.example 'Pilot proposal' 'Hello.' lou@acme.example
+expect "the post hook logs one row per address, with domain, subject and kind" \
+  test "$(cut -f2- "$FM_HOME/state/outbound.tsv" | tr '\t\n' '|;')" = 'ann@acme.example|acme.example|Pilot proposal|draft;lou@acme.example|acme.example|Pilot proposal|draft;'
+refuse "the same address within 7 days, on any topic" "One email per address" bash -c 'jq -cn "{tool_input:{to:\"ann@acme.example\",subject:\"Other\",body:\"x\"}}" | "$0" pre "$1" draft' "$ROOT/hooks/outbound-gate.sh" "$FM_HOME"
+refuse "and says to stop and log it" "don't try another way" bash -c 'jq -cn "{tool_input:{to:\"eve@acme.example\",subject:\"Other\",body:\"x\"}}" | "$0" pre "$1" draft' "$ROOT/hooks/outbound-gate.sh" "$FM_HOME"
+expect "another person at the same company is refused" exit2x dpass eve@acme.example 'Something else'
+expect "an address already mailed, in cc, is refused" exit2x dpass eve@beta.example 'Calendar' 'Hello.' ann@acme.example
+expect "a public provider counts by address" dpass fm-smoke-pat@gmail.com 'Calendar'
+dlog fm-smoke-pat@gmail.com 'Calendar'
+expect "so another address there passes" dpass fm-smoke-joe@gmail.com 'Budget'
+expect "and the same one doesn't" exit2x dpass fm-smoke-pat@gmail.com 'Budget'
+row 8 x@gamma.example 'Pilot proposal for the port'
+expect "after 8 days, a subject close to one the company got within 30 is refused" exit2x dpass x@gamma.example 'Pilot proposal for port, second version'
+expect "and a different one passes" dpass y@gamma.example 'Radar test calendar'
+row 31 z@delta.example 'Pilot proposal for the port'
+expect "a subject the company got 31 days ago passes" dpass z@delta.example 'Pilot proposal for the port'
+expect "a correction is refused" exit2x dpass new@eps.example 'Correction to the proposal'
+expect "and so is one in the body" exit2x dpass new@eps.example 'Pilot' $'Hello.\nI was wrong about the figure.'
+expect "a call without recipients is refused" exit2x og pre <<<'{"tool_input":{"subject":"Hi","body":"x"}}'
+echo ann@acme.example > "$FM_HOME/state/outbound.unlock"
+expect "a founder's unlock for the address lets one through" dpass ann@acme.example 'Follow-up'
+dlog ann@acme.example 'Follow-up'
+expect "the post hook uses it up" test ! -s "$FM_HOME/state/outbound.unlock"
+expect "then the address is refused again" exit2x dpass ann@acme.example 'Follow-up two'
+echo @acme.example > "$FM_HOME/state/outbound.unlock"
+expect "@domain unlocks the company, a correction too" dpass eve@acme.example 'Correction to the calendar'
+echo @gmail.com > "$FM_HOME/state/outbound.unlock"
+expect "@ and a public provider unlocks no one there" exit2x dpass fm-smoke-pat@gmail.com 'More'
+expect "without its arguments it refuses" exit2x "$ROOT/hooks/outbound-gate.sh" <<<'{"tool_input":{"to":"a@b.example"}}'
+outfresh
+row 2 buyer@example 'Hello'
+printf '%s\n' 's' '' 'b' > "$FM_HOME/state/outreach.one-send.0b01.txt"
+expect "a founder's send grant doesn't lift the outbound rules" exit2 sendas 0b01 '{"tool_input":{"to":"buyer@example","subject":"s","body":"b"}}'
+expect "and the refusal leaves the grant unused" test ! -e "$FM_HOME/state/outreach.one-send.0b01"
+outfresh
 
 echo "# subagent tiers"
 tier() { jq -cn --arg t "$1" '{tool_input: {subagent_type: $t, description: "count the rows"}}' \
