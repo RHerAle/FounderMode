@@ -381,6 +381,13 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 - **Fix:** Before you change a text field in a shared store, export the full record and build the new value from it in a script, or use a call that replaces a substring. Read the record back afterwards.
 - **Where:** No mechanism.
 
+### State copied between notes drifts
+
+- **What happened:** The sessions kept the state of pending work in their own notes: a memory file, a status file, a line in a report. Each copy was right when a session wrote it. Later the same item stood open in one note and closed in another, and a session that read the stale copy acted on it. An audit of the notes found dozens of lines that stated as current something that had changed.
+- **Cause:** A note copies the state at one moment, and nothing updates the copy when the state changes. Each new note adds a copy.
+- **Fix:** Keep the state in one log where lines are only added: one event per line, with the role that wrote it, its date and its source. The state of an item is the fold of its events, and a note points to the item's id. Sessions read the log through SQL views built in memory on each call, so no database file becomes a second copy. `founder-mode db` is a pilot of this, tried on one team for a short time.
+- **Where:** `bin/db` (pilot), `tests/smoke.sh`. No mechanism for the prose rule.
+
 ## Usage and cost
 
 ### The limit belongs to the account

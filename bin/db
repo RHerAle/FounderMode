@@ -1,0 +1,320 @@
+#!/usr/bin/env -S python3 -I
+# Copyright 2026 RHerAle
+# SPDX-License-Identifier: Apache-2.0
+# Part of Founder Mode: https://github.com/RHerAle/FounderMode
+"""founder-mode db: an append-only log of pending items, read through SQL. PILOT: a template to adapt, tried on one
+team for a short time. Python 3, standard library only.
+
+Usage:
+  founder-mode db open --owner X --source S [--due YYYY-MM-DD] [--opened YYYY-MM-DD] "text"
+  founder-mode db note <id> --source S "text"
+  founder-mode db reassign <id> --owner X --source S ["reason"]
+  founder-mode db close|cancel|verify <id> --source S ["reason"]
+  founder-mode db pending [--owner X]   the open items
+  founder-mode db overdue               the open items whose due date is before today
+  founder-mode db q "<SELECT or WITH>"  a free query, read-only; cut after 5 s or past 1 GB of memory
+  founder-mode db --selftest
+  A text that starts with "-" goes after "--". Quote a hash in its short form: 32 hex digits or more count as a secret.
+
+Views, built in an in-memory SQLite on every call. No .db file exists, and the log stays the only source:
+  pending   id, owner, creator, opened, due, state, text, source, verified, last_change
+  events    line, ts, role, id, action, owner, due, text, source, verified, opened
+
+The log is $FM_HOME/pending/events.tsv: ten tab-separated fields per line (those of "events" without "line"), and
+lines are only ever added. The state of an item is the fold of its events, in order. The member roles and the
+coordinator of $FM_HOME/roles.tsv write, and FM_ROLE names the writer. An owner is one of them or a founder (FOUNDERS
+below). The owner, the creator or the coordinator reassign, close, cancel and change the due date (--due, on any
+action), and only while the item is open. The owner or the coordinator verify. A closed item is never reopened: open
+another one. Every event carries a source: a path:line, a founder's order or a URL. No field takes a tab, an IPv4
+address, a private host name, a /root/ path or a secret pattern.
+A broken line: when a cut leaves one in the log, the coordinator copies the file, comments the line out with "#" and
+writes down that it did.
+Output: TSV with a header. Exit codes: 0 fine; 2 refused; 3 a result, but a bad line was skipped (a warning on stderr
+names its path:line). An accepted write exits with 0 even when it warns.
+"""
+import argparse, contextlib, fcntl, io, os, re, resource, secrets, sqlite3, sys, tempfile, time
+from datetime import date, datetime
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+HOME = Path(os.environ.get("FM_HOME") or Path.home() / ".founder-mode")
+FOUNDERS = ("founder-a", "founder-b")  # the owners who are not sessions: put your founders' names here
+ACTIONS = ("open", "note", "reassign", "close", "cancel", "verify")
+FIELDS = ("ts", "role", "id", "action", "owner", "due", "text", "source", "verified", "opened")
+PENDING = ("id", "owner", "creator", "opened", "due", "state", "text", "source", "verified", "last_change")
+MAX_TEXT = 400    # an item is one line, and the detail lives in its source
+MAX_LINE = 4096   # under this size, one write of an append doesn't mix with another process's
+MAX_SECONDS, MAX_MEMORY = 5, 1 << 30  # caps of q: a runaway query must not take the machine down with every session on it
+CONTROL = re.compile(r"[\x00-\x1f\x7f\x85  �]")  # U+FFFD: bytes that weren't UTF-8
+IPV4 = re.compile(r"(?<!\d)(?:\d{1,3}\.){3}\d{1,3}(?!\d)")
+HOST = re.compile(r"\.ts\.net\b|(?<![\w.-])/root/", re.I)  # tailnet names and a server's root paths: add your own hosts
+# shortcut: a short list of known shapes, with word boundaries, and not a secret scanner. Add the shapes of the keys
+# you use. Any change to SECRET, HOST or the rules in reason() also applies when the log loads, so load your real log
+# with the new rule first: a stricter one skips lines already written.
+SECRET = re.compile(
+    r"\b(?:sk-[\w-]{16,}|gh[pousr]_\w{20,}|github_pat_\w{20,}|AKIA[0-9A-Z]{16}|xox[abprs]-[\w-]{10,}"
+    r"|AIza[\w-]{30,}|eyJ[\w-]{10,}\.[\w-]{10,}|[0-9a-f]{32,}\b|bearer\s+[\w.~+/-]{16,}"
+    r"|(?:password|passwd|secret|token|api[_-]?key)\s*=\s*\S{6,})|-----BEGIN [A-Z ]*PRIVATE KEY", re.I)
+BAD_ROLE = "role: FM_ROLE must be a member role or the coordinator of roles.tsv"
+BAD_OWNER = "owner: missing, or neither a writing role nor a founder"
+
+class Refused(Exception): pass
+
+def iso(s):
+    if not re.fullmatch(r"\d{4}-\d\d-\d\d", s): raise ValueError(s)
+    return date.fromisoformat(s)
+
+def people():
+    """(writers, owners, coordinator) from roles.tsv. Advisors and isolated roles don't write."""
+    writers, coordinator = [], ""
+    with contextlib.suppress(OSError):
+        for line in (HOME / "roles.tsv").read_text("utf-8").splitlines():
+            c = line.split("\t")
+            if line.startswith("#") or len(c) < 6: continue
+            if c[5] in ("-", "coordinator"): writers.append(c[0])
+            if c[5] == "coordinator": coordinator = c[0]
+    return tuple(writers), tuple(writers) + FOUNDERS, coordinator
+
+def reason(c, pend, who=None):
+    """Why an event is not valid, or None. Never repeats the refused value. Writing and loading share the rule, except
+    for `who`: the load skips the checks on who may write, so a role that leaves roles.tsv keeps the lines it wrote.
+    A guard against accidents, not against an attacker: a session can set FM_ROLE to another role's name."""
+    if len(c) != len(FIELDS): return f"{len(c)} fields, {len(FIELDS)} expected"
+    ts, role, id_, act, owner, due, text, source, verified, opened = c
+    for name, v in zip(FIELDS, c):
+        if CONTROL.search(v): return f"{name}: holds a tab, a line break, a control character or bytes that aren't UTF-8"
+        if IPV4.search(v): return f"{name}: holds an IPv4 address"
+        if SECRET.search(v): return f"{name}: holds a secret pattern"
+        if HOST.search(v): return f"{name}: holds a private host name or a /root/ path"
+    try:
+        day = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S").date()
+        if due: iso(due)
+        if iso(opened) > day: return "opened: later than the day of the event"
+    except ValueError:
+        return "ts, due or opened: not a valid date (YYYY-MM-DD)"
+    writers, owners, coordinator = who or ((role,), (owner,), role)
+    if not role or role not in writers: return BAD_ROLE
+    if act not in ACTIONS: return "action: not one of " + ", ".join(ACTIONS)
+    if not source.strip(): return "source: missing (a path:line, an order or a URL)"
+    if len(text) > MAX_TEXT: return f"text: {len(text)} characters, and the cap is {MAX_TEXT}"
+    if not re.fullmatch(r"[0-9a-f]{6}", id_): return "id: must be 6 hex digits"
+    p = pend.get(id_)
+    if act == "open":
+        if p: return "id: already exists"
+        if not owner or owner not in owners: return BAD_OWNER
+        return None if text.strip() and verified == "no" else "open: the text is missing, or verified is not \"no\""
+    if not p: return "id: doesn't exist"
+    if owner and act != "reassign": return "owner: only open and reassign carry one"
+    mine = role in (p["owner"], p["creator"], coordinator)
+    if due and not (mine and p["state"] == "open"):
+        return "due: only the owner, the creator or the coordinator change it, and never on a closed item"
+    if act == "note": return None if text.strip() else "note: the text is missing"
+    if p["state"] != "open": return f"{act}: the item is already {p['state']}"
+    if act == "reassign" and (not owner or owner not in owners): return BAD_OWNER
+    if act == "verify":
+        return None if verified == "yes" and role in (p["owner"], coordinator) else "verify: only the owner or the coordinator"
+    # reassign follows the rule of close: otherwise anyone could make itself the owner and then close
+    return None if mine else f"{act}: only the owner, the creator or the coordinator"
+
+def fold(data, path, warn):
+    """The valid events and the state of each item. A bad line is skipped with a warning."""
+    events, pend = [], {}
+    for n, raw in enumerate(data.split(b"\n"), 1):
+        line = raw.decode("utf-8", "replace")
+        if not line.strip() or line.startswith("#"): continue
+        c = line.split("\t")
+        m = reason(c, pend) or (len(raw) + 1 >= MAX_LINE and f"a line of {MAX_LINE} bytes or more")
+        if m:
+            warn(f"{path}:{n}: {m}; line skipped")
+            continue
+        ts, role, id_, act, owner, due, text, source, _, opened = c
+        events.append((n, *c))
+        if act == "open":
+            pend[id_] = dict(id=id_, owner=owner, creator=role, opened=opened, due=None, state="open", text=text,
+                             source=source, verified="no", last_change=ts)
+        p = pend[id_]
+        p["last_change"] = ts
+        if due: p["due"] = due
+        if act == "reassign": p["owner"] = owner
+        if act == "verify": p["verified"] = "yes"
+        if act in ("close", "cancel"): p["state"] = "closed" if act == "close" else "cancelled"
+    return events, pend
+
+def record(role, act, id_, owner, due, text, source, opened, now, warn):
+    """Adds one event under flock, with an append and an fsync. Returns the id, or raises Refused and writes nothing."""
+    who = people()
+    if role not in who[0]: raise Refused(BAD_ROLE)
+    path = HOME / "pending/events.tsv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+b", buffering=0) as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        f.seek(0)
+        data = f.read()
+        _, pend = fold(data, path, warn)
+        if act == "open":  # the new id is compared with the ones in the log while the lock is held
+            id_ = next(i for i in iter(lambda: secrets.token_hex(3), None) if i not in pend)
+        verified = "yes" if act == "verify" else pend.get(id_, {}).get("verified", "no")
+        c = [f"{now:%Y-%m-%d %H:%M:%S}", role, id_, act, owner, due, text, source, verified, opened or f"{now:%Y-%m-%d}"]
+        line = ("\t".join(c) + "\n").encode()
+        m = reason(c, pend, who) or (len(line) >= MAX_LINE and f"the line reaches {MAX_LINE} bytes")
+        if m: raise Refused(m)
+        header = b"" if data else ("# " + "\t".join(FIELDS) + "\n").encode()
+        tail = b"\n" if data and not data.endswith(b"\n") else b""  # a tail a cut left broken doesn't swallow the new event
+        f.write(header + tail + line)
+        os.fsync(f.fileno())
+    return id_
+
+def mount(warn):
+    """An in-memory database with both views, read from the log at this moment."""
+    path = HOME / "pending/events.tsv"
+    events, pend = fold(path.read_bytes() if path.exists() else b"", path, warn)
+    con = sqlite3.connect(":memory:")
+    for name, columns, rows in (("events", ("line",) + FIELDS, events), ("pending", PENDING, [tuple(p.values()) for p in pend.values()])):
+        con.execute(f"CREATE TABLE {name} ({', '.join(columns)})")
+        con.executemany(f"INSERT INTO {name} VALUES ({', '.join('?' * len(columns))})", rows)
+    return con
+
+def query(con, sql, parameters=(), seconds=MAX_SECONDS):
+    """One SELECT or WITH, read-only and with a time cap. Returns (columns, rows) or raises Refused."""
+    if not re.match(r"\s*(select|with)\b", sql, re.I): raise Refused("q takes only SELECT or WITH")
+    reads = (sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ, sqlite3.SQLITE_FUNCTION, sqlite3.SQLITE_RECURSIVE)
+    con.execute("PRAGMA query_only=ON")
+    con.set_authorizer(lambda action, *_: sqlite3.SQLITE_OK if action in reads else sqlite3.SQLITE_DENY)
+    end = time.monotonic() + seconds
+    con.set_progress_handler(lambda: time.monotonic() > end, 10000)  # a value other than 0 cuts the query
+    try:
+        cur = con.execute(sql, parameters)  # a single execute: two statements in one string are an error
+        return [d[0] for d in cur.description], cur.fetchall()
+    except MemoryError:
+        raise Refused(f"query refused: over {MAX_MEMORY >> 30} GB of memory") from None
+    except (sqlite3.Error, sqlite3.Warning) as e:
+        raise Refused(f"query refused: {f'over {seconds} s' if time.monotonic() > end else e}") from None
+
+def main(argv, role, now):
+    hard = resource.getrlimit(resource.RLIMIT_AS)[1]
+    resource.setrlimit(resource.RLIMIT_AS, (MAX_MEMORY if hard == resource.RLIM_INFINITY else min(MAX_MEMORY, hard), hard))
+    skipped = []
+    def warn(m): skipped.append(m); print(f"warning: {m}", file=sys.stderr)
+    ap = argparse.ArgumentParser(prog="founder-mode db", add_help=False, allow_abbrev=False)
+    ap.add_argument("words", nargs="*")
+    for option in ("--owner", "--source", "--due", "--opened"): ap.add_argument(option, default="")
+    a = ap.parse_intermixed_args(argv)
+    order, rest = (a.words[0], a.words[1:]) if a.words else ("", [])
+    try:
+        if order in ACTIONS and (order == "open" or rest):
+            id_, text = ("", rest) if order == "open" else (rest[0], rest[1:])
+            id_ = record(role, order, id_, a.owner, a.due, " ".join(text).strip(), a.source.strip(),
+                         a.opened if order == "open" else "", now, warn)
+            print(f"{order}: {id_}")
+            return 0
+        if order == "q" and len(rest) == 1:
+            sql, parameters = rest[0], ()
+        elif order in ("pending", "overdue") and not rest:
+            sql = ("SELECT id, owner, due, opened, verified, text, source FROM pending WHERE state = 'open'"
+                   " AND (? = '' OR owner = ?) AND (? = '' OR due < ?) ORDER BY due IS NULL, due, opened, id")
+            limit = f"{now:%Y-%m-%d}" if order == "overdue" else ""
+            parameters = (a.owner, a.owner, limit, limit)
+        else:
+            print(__doc__, file=sys.stderr if argv else sys.stdout)
+            return 2 if argv else 0
+        columns, rows = query(mount(warn), sql, parameters)
+    except Refused as e:
+        print(f"refused: {e}", file=sys.stderr)
+        return 2
+    print("\t".join(columns))
+    for row in rows: print("\t".join("" if v is None else str(v) for v in row))
+    return 3 if skipped else 0
+
+def selftest():
+    """PILOT self-test, against a throwaway $FM_HOME with the roles of templates/roles.tsv. It touches no real log."""
+    global HOME
+    assert __debug__, "the self-test needs its asserts: don't run it with -O"
+    t0, av = datetime(2030, 1, 15, 3, 0, 0), []
+    roles = (HERE.parent / "templates/roles.tsv").read_text("utf-8")
+    with tempfile.TemporaryDirectory() as tmp:
+        HOME = Path(tmp)
+        (HOME / "roles.tsv").write_text(roles, "utf-8")
+
+        def put(role, act, id_="", owner="", text="", source="f:1", due="", opened=""):
+            try:
+                return record(role, act, id_, owner, due, text, source, opened, t0, av.append)
+            except Refused as e:
+                return e
+
+        a = put("legal", "open", owner="finance", text="one", due="2030-01-10", opened="2029-12-01")
+        long = put("coordinator", "open", owner="founder-a", text="á" * MAX_TEXT)
+        assert all(isinstance(i, str) and re.fullmatch("[0-9a-f]{6}", i) for i in (a, long)), (a, long)
+        ip, key, base = ".".join("1234"), "ghp_" + "a" * 36, dict(role="legal", act="open", owner="coordinator", text="x")
+        other = dict(id_=a, owner="", text="")
+        bad = [put(**{**base, **k}) for k in (
+            dict(owner=""), dict(owner="outreach"), dict(source=" "), dict(text="a\tb"), dict(text="a\nb"), dict(text="x " + ip),
+            dict(source="http://" + ip + "/a"), dict(text="x " + key), dict(text="token=" + "x9" * 6), dict(source="f" * 40),
+            dict(text="x" * (MAX_TEXT + 1)), dict(source="x" * MAX_LINE), dict(opened="2030-01-16"), dict(due="15-01-2030"),
+            dict(role="advisor1"), dict(role=""), dict(role="outreach"), dict(text=" "),
+            dict(role="coordinator", act="note", id_="ffffff", owner=""), dict(role="dev", act="close", **other),
+            dict(act="verify", **other), dict(role="finance", act="note", **other), dict(role="finance", act="close", id_=a, owner="dev"),
+            dict(role="finance", act="erase", **other), dict(text="x node.ts.net"), dict(source="/root/x:1"),
+            dict(role="dev", act="note", id_=a, owner="", text="a third party's note with a due date", due="2030-02-01"))]
+        assert all(isinstance(m, Refused) for m in bad), [i for i, m in enumerate(bad) if not isinstance(m, Refused)]
+        assert not any(ip in str(m) or key in str(m) or "x9" in str(m) for m in bad)  # a refusal doesn't repeat the value
+        steps = [put("finance", "note", a, text="a note"), put("finance", "verify", a), put("legal", "reassign", a, owner="dev"),
+                 put("dev", "close", a, text="done", due="2030-01-11")]
+        assert steps == [a] * 4 and isinstance(put("dev", "close", a), Refused), steps
+        assert isinstance(put("coordinator", "note", a, text="a due date on a closed item", due="2030-02-01"), Refused)
+        log = HOME / "pending/events.tsv"
+        before = log.read_bytes()
+        assert before.count(b"\n") == 7 and before.startswith(b"# ts\t") and not av  # header, 2 opens, 4 steps, no refusal
+        with open(log, "ab") as f: f.write(b"2030-01-15 03:00:00\tlegal\tabc\xc3")  # a broken tail, cut inside a letter
+        b = put("design", "open", owner="design", text="after the broken tail")
+        assert log.read_bytes().startswith(before) and len(av) == 1 and ":8: " in av[0], av
+        av.clear()
+        see = lambda sql: query(mount(av.append), sql)[1]
+        assert see(f"SELECT state, owner, creator, verified, opened, due FROM pending WHERE id = '{a}'") == [
+            ("closed", "dev", "legal", "yes", "2029-12-01", "2030-01-11")]
+        assert see("SELECT id, owner, opened, due, length(text) FROM pending WHERE state = 'open' ORDER BY id") == sorted([
+            (long, "founder-a", "2030-01-15", None, MAX_TEXT), (b, "design", "2030-01-15", None, 21)])
+        assert see("SELECT count(*), count(DISTINCT id), max(line) FROM events") == [(7, 3, 9)]
+        assert see("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 3) SELECT sum(i) FROM n") == [(6,)]
+        assert len(av) == 4 and len(set(av)) == 1, av  # the broken tail, once per load
+        outside = str(HOME / "outside.db")
+        forbidden = ("INSERT INTO pending (id) VALUES ('x')", f"select 1; attach database '{outside}' as y", "SELECT 1; SELECT 2",
+                     "PRAGMA query_only = OFF", "WITH x AS (SELECT 1) DELETE FROM pending", f"ATTACH DATABASE '{outside}' AS y",
+                     "SELECT load_extension('x')", "CREATE TABLE t (a)", "SELECT * FROM pragma_database_list")
+        for sql in forbidden:
+            try:
+                query(mount(lambda m: None), sql)
+            except Refused:
+                continue
+            raise AssertionError(f"should have been refused: {sql}")
+        assert not Path(outside).exists()
+
+        def run(argv, role=""):  # the whole of main(), with its output caught: exit code and stdout
+            with contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()):
+                return main(argv, role, t0), out.getvalue()
+
+        late = put("dev", "open", owner="dev", text="late", due="2030-01-01")
+        code, out = run(["overdue"])  # 3 because the load skipped the broken tail
+        assert code == 3 and out.count("\n") == 2 and out.split("\n")[1].startswith(late + "\tdev\t2030-01-01\t"), out
+        assert run(["pending", "--owner", "design"])[1].count("\n") == 2 and run(["pending"])[1].count("\n") == 4
+        assert run(["open", "--owner", "coordinator", "no source"], "legal")[0] == 2 and run(["q", "DROP TABLE x"], "advisor1")[0] == 2
+        assert run(["note", late, "--source", "f:2", "--", "-a text with a dash"], "dev") == (0, f"note: {late}\n")
+        assert run([])[0] == 0 and run(["what"])[0] == 2
+        try:  # main() set the memory cap on this process: an allocation of that size fails before it touches a page
+            bytearray(MAX_MEMORY)
+            raise AssertionError("the memory cap is not set")
+        except MemoryError:
+            pass
+        t = time.monotonic()
+        try:  # a recursion without an end is cut at the time cap, lowered to 1 s here
+            query(mount(lambda m: None), "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) SELECT count(*) FROM n", seconds=1)
+            raise AssertionError("the runaway query finished")
+        except Refused as e:
+            assert "over 1 s" in str(e) and time.monotonic() - t < 3, e
+        # a role that leaves roles.tsv keeps its lines, and writes no more
+        (HOME / "roles.tsv").write_text(roles.replace("\nlegal\t", "\nlawyer\t"), "utf-8")
+        assert see("SELECT count(*) FROM events WHERE role = 'legal'") == [(2,)] and isinstance(put("legal", "note", a, text="x"), Refused)
+    print(f"selftest (pilot): fine ({len(bad)} writes refused, {len(forbidden)} queries refused, 1 runaway query cut)")
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(selftest() if sys.argv[1:] == ["--selftest"] else main(sys.argv[1:], os.environ.get("FM_ROLE", ""), datetime.now()))

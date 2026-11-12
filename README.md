@@ -4,7 +4,7 @@ Founder Mode turns a handful of Claude Code sessions into a small company. Each 
 
 Plenty of tools run Claude Code agents in parallel, Claude Code's own agent teams among them. Founder Mode keeps each session in one role, with its own memory and conversation, for weeks, under a chain of authority that ends at a human.
 
-It is a bash launcher, a set of markdown templates, three subagent definitions and ten hooks around stock Claude Code. It runs no server or daemon and needs only bash, jq and node.
+It is a bash launcher, a set of markdown templates, three subagent definitions and ten hooks around stock Claude Code. It runs no server or daemon and needs only bash, jq and node. A pilot, `founder-mode db`, also needs python3.
 
 ## What's in it
 
@@ -14,6 +14,7 @@ It is a bash launcher, a set of markdown templates, three subagent definitions a
 - **Isolation.** The session that reads outside mail works inside its own folder, apart from the other roles' folders, without a shell, without the org chart and without messages to or from other sessions, because mail can carry hidden instructions.
 - **Pace.** The usage limit belongs to the whole account, and one session can stop all the others. The pace rules keep one session from draining the account, and `founder-mode stalled` finds the sessions a limit stopped.
 - **Git for many sessions on one account.** One branch per topic, one open PR per session and repository, a PR log, and a hook that stops the common git and gh commands that would publish under your name.
+- **Pending items (pilot).** One log of pending items where lines are only added, read through SQL views built in memory, so the state of an item lives in one place.
 
 ## The org chart
 
@@ -72,6 +73,7 @@ Most rules in this table came out of a real failure. The PR log works around a G
 | Subagents come in three tiers, each with its own model and effort | Subagents took the model and effort of the session that launched them: in one week, 3,826 subagent requests ran at `max` or `xhigh`. |
 | A program checks every deliverable after each write | Sessions checked dashes, attribution and confidential names by hand before each delivery. |
 | Every claim in a report names its source | A session put its own guesses and a citation to a book it hadn't opened into a team report. It had the rule against unchecked claims in memory and applied it to its chat replies, leaving the file unchecked. |
+| Pending items live in one log that only grows (pilot) | Each session copied the state of pending work into its own notes, and the copies drifted apart. |
 
 ## How it works
 
@@ -217,9 +219,30 @@ founder-mode delegations 1a2b3c4d ok 'src/app.js:42'      # ok, invented, redone
 
 Copy the three files to `~/.claude/agents/` or to a repository's `.claude/agents/`. A session already running doesn't see an agent file added after it started.
 
+### Pending items (pilot)
+
+`founder-mode db` keeps the pending items of every role in one log, `$FM_HOME/pending/events.tsv`, where lines are only added. It is a pilot: one team tried it for a short time, so read `bin/db` and adapt it before you rely on it. It needs python3 and uses only the standard library.
+
+```bash
+founder-mode db open --owner legal --source 'notes/call.md:12' --due 2030-02-01 'Send the signed form'
+founder-mode db pending --owner legal      # the open items; overdue lists the ones past their due date
+founder-mode db close 1a2b3c --source 'mail/sent.md:4' sent
+founder-mode db q "SELECT owner, count(*) FROM pending WHERE state = 'open' GROUP BY owner"
+```
+
+Each event carries the role that wrote it, a date and a source. The state of an item is the fold of its events. The two views, `pending` and `events`, are built in an in-memory SQLite on every call, so no database file can drift from the log. The member roles and the coordinator write, and the advisors and the isolated role don't. Founders own items under the names in `FOUNDERS`, at the top of `bin/db`.
+
+Its guards:
+
+- `q` runs one `SELECT` or `WITH` under an authorizer that allows reads only, stops after 5 seconds and gets 1 GB of memory.
+- A write holds a lock on the log, checks the event against the log's current state, appends it in one write and syncs it. A tail that a cut left broken stays on its own line, and the load skips it with a warning.
+- No field takes a tab, an IPv4 address, a tailnet name, a `/root/` path or the shape of a common key or token. The list is short, so add your own hosts and keys.
+
+`FM_ROLE` names the writer, and a session can set it to another role's name. The rules on who may close or reassign guard against accidents and stop no session set on getting past them. The log sits outside `state/` and the views read nothing else, so the mail and delegation logs keep their own readers. `bin/db --selftest` runs the pilot's checks against a throwaway folder.
+
 ## Quick start
 
-You need Claude Code 2.1.295 or later (tested with 2.1.296 and 2.1.303), bash, jq and node. Every session signs in with your own Claude account, so one account means one person. Make sure the terms of your plan cover what you do with it: the consumer plans (Free, Pro and Max) are meant for individual use, and in the European consumer terms they exclude business use; Team, Enterprise and API accounts come under the commercial terms.
+You need Claude Code 2.1.295 or later (tested with 2.1.296 and 2.1.303), bash, jq and node, and python3 for the pilot `founder-mode db`. Every session signs in with your own Claude account, so one account means one person. Make sure the terms of your plan cover what you do with it: the consumer plans (Free, Pro and Max) are meant for individual use, and in the European consumer terms they exclude business use; Team, Enterprise and API accounts come under the commercial terms.
 
 ```bash
 git clone <this repository> ~/founder-mode
