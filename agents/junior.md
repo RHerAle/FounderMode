@@ -1,6 +1,7 @@
 ---
 name: junior
 description: "Junior: Sonnet, high effort, without CLAUDE.md. Read-heavy sweeps and summaries, web searches, inventories that need judgment, internal drafts, code and tests, and checking a diff against a given list. Never makes a deliverable: the session that asked reviews what it writes and delivers it. The request names the files it may touch, its sources, a cap on tool calls and the repository rules it needs."
+tools: Read, Write, Edit, Bash, WebFetch, WebSearch, ToolSearch
 disallowedTools: Agent
 model: sonnet
 effort: high

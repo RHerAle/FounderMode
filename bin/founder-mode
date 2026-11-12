@@ -10,6 +10,9 @@
 #   founder-mode delegations [<id> <status> [note]]    list the subagent calls nobody has marked, or mark one
 #   founder-mode mail <file> <topic>                   leave a message for the other founder (bin/founder-mail.sh)
 #   founder-mode db <order> [args]                     pilot: the log of pending items and its SQL views (bin/db, needs python3)
+#   founder-mode summary [--dry]                       rewrite the org chart's "today" block from facts/ (bin/facts-summary)
+#   founder-mode retire "<old>" "<new>" --by R --source S [--dry]   retire a phrase and open an item per owner (bin/retire)
+#   founder-mode find-conversation "<text>" | --list   search the role's previous conversation (bin/find-conversation)
 #
 # FM_HOME           where the org chart, roles and state live (default ~/.founder-mode)
 # FM_DRY_RUN=1      print the claude command and change nothing
@@ -44,7 +47,7 @@ alive() {
 usage() {
   local roles=
   [ -f "$FM_HOME/roles.tsv" ] && roles=$(awk -F'\t' '!/^#/ && NF { printf "%s%s", s, $1; s = "|" }' "$FM_HOME/roles.tsv")
-  echo "usage: founder-mode init | stalled [--hook] | delegations [<id> <status> [note]] | mail <file> <topic> | db <order> [args] | ${roles:-<role>} [-r [id] | --new] [args]" >&2
+  echo "usage: founder-mode init | stalled [--hook] | delegations [<id> <status> [note]] | mail <file> <topic> | db <order> [args] | summary [--dry] | retire <old> <new> --by <role> --source <s> [--dry] | find-conversation <text> | ${roles:-<role>} [-r [id] | --new] [args]" >&2
   exit 2
 }
 
@@ -73,6 +76,9 @@ case ${1:-} in
   stalled) shift; exec node "$ROOT/bin/stalled.js" "$@" ;;
   delegations) shift; exec "$ROOT/bin/delegations.sh" "$FM_HOME" "$@" ;;
   db) shift; command -v python3 >/dev/null || die "db needs python3"; FM_HOME=$FM_HOME exec "$ROOT/bin/db" "$@" ;;
+  summary|retire|find-conversation)
+    c=$1; shift; [ "$c" = summary ] && c=facts-summary
+    command -v python3 >/dev/null || die "$c needs python3"; FM_HOME=$FM_HOME exec "$ROOT/bin/$c" "$@" ;;
   ''|-h|--help) usage ;;
 esac
 
@@ -206,15 +212,20 @@ pointer=$(jq -n --arg p "$h/session-pointer.sh" --arg fm "$FM_HOME" --arg r "$ro
 # hook sets onFailure: "block". The guard reads a 1 MB command in seconds, so 30 seconds only cuts off a runaway.
 # The subagent hooks get the tier names of agents/: subagent-tier.sh refuses a subagent that would run at the session's
 # model and effort, and delegation-log.sh logs each call to a tier. None of the hooks below blocks on failure.
+# The relay pilot: a role with a row in relay.tsv hears when its context passes that many tokens (templates/relay.md).
+relay=
+[ -f "$FM_HOME/relay.tsv" ] && relay=$(awk -F'\t' -v r="$role" '!/^#/ && $1 == r { print $2; exit }' "$FM_HOME/relay.tsv")
+[ -z "$relay" ] || [[ $relay =~ ^[1-9][0-9]{4,6}$ ]] || die "relay.tsv: the $role row needs a threshold in tokens (10000 to 9999999)"
 unlock=0
 case $kind in
   member|coordinator|advisor)
     [ "${FM_UNLOCK:-}" = 1 ] && unlock=1
     hooks=$(jq -n --arg h "$h" --arg fm "$FM_HOME" --arg r "$role" --arg k "$kind" --arg f "$rf" --argjson u "$unlock" \
-      --argjson t '["intern", "junior", "senior"]' '
+      --arg rt "$relay" --argjson t '["intern", "junior", "senior"]' '
       def hook($c; $a): {type: "command", command: "\($h)/\($c)", args: $a, timeout: 10};
       {hooks: {
-        UserPromptSubmit: [{hooks: [hook("orgchart-notice.sh"; [$fm, $r, $k, $f]), hook("weekly-cap.sh"; [$fm, $k])]}],
+        UserPromptSubmit: [{hooks: ([hook("orgchart-notice.sh"; [$fm, $r, $k, $f]), hook("weekly-cap.sh"; [$fm, $k])]
+          + if $rt == "" then [] else [hook("relay-threshold.sh"; [$fm, $r, $rt])] end)}],
         PreToolUse: ((if $u == 1 then [] else [{matcher: "Bash|Monitor",
             hooks: [hook("irreversible-guard.sh"; [$k]) + {timeout: 30, onFailure: "block"}]}] end)
           + [{matcher: "Agent", hooks: [hook("subagent-tier.sh"; $t)]},
@@ -264,8 +275,28 @@ if [ -n "${FM_FOUNDER_MAIL:-}" ]; then
       PostToolUse: [{matcher: $m, hooks: [{type: "command", command: $c, args: ["post", $fm, $to, $k]}]}]}}')
 fi
 
-# One --settings value: the memory folder, settings/all.json (not for the isolated role), settings/<role file>.json,
-# the hooks and the fixed rules, merged so that lists add up the way Claude Code merges them across settings files,
+# Every tool definition and every skill description goes out with each request, so each role loses the tools, skills
+# and plugins it doesn't use: tools-by-role.json and skills-by-role.json give each group on or off (skills also take
+# name-only), the role's row over the default one. A missing file changes nothing. Advisors and the isolated role keep
+# their fixed tool lists, and the skill and plugin rows apply to them too.
+lean='{}' veto=
+pick='. as $c | (($c.roles.default // {}) + ($c.roles[$r] // {}))'
+if [ -f "$FM_HOME/skills-by-role.json" ]; then
+  lean=$(jq -c --arg r "$role" "$pick"' | [to_entries[] | .value as $v
+      | if ($v | IN("on", "name-only", "off")) then . else error("\(.key): \($v)") end | ($c.groups[.key] // [])[] | {key: ., value: $v}]
+    | {skillOverrides: from_entries, skillListingMaxDescChars: ($c.maxDescChars // 250)}' "$FM_HOME/skills-by-role.json") \
+    || die "skills-by-role.json: not valid JSON, or a value other than on, name-only or off"
+fi
+if [ -f "$FM_HOME/tools-by-role.json" ]; then
+  off=$(jq -c --arg r "$role" "$pick"' | [to_entries[] | select(.value == "off") | ($c.groups[.key] // [])[]] | unique | join(",")' \
+    "$FM_HOME/tools-by-role.json") || die "tools-by-role.json is not valid JSON"
+  case $kind in member|coordinator) veto=$(jq -r . <<<"$off") ;; esac
+  lean=$(jq -c --arg r "$role" --argjson l "$lean" '$l + {enabledPlugins: ((.plugins // {}) | with_entries(select(.value | index($r) | not) | .value = false))}' \
+    "$FM_HOME/tools-by-role.json") || die "tools-by-role.json: plugins must map each plugin to a list of roles"
+fi
+
+# One --settings value: the memory folder, the skill and plugin rows, settings/all.json (not for the isolated role),
+# settings/<role file>.json, the hooks and the fixed rules, merged so that lists add up the way Claude Code merges them across settings files,
 # and the fixed rules come last, so no file under settings/ can undo them.
 extra=()
 [ "$kind" != isolated ] && [ -f "$FM_HOME/settings/all.json" ] && extra+=("$FM_HOME/settings/all.json")
@@ -275,10 +306,11 @@ settings=$(jq -cs 'def m($a; $b): if ($a | type) == "object" and ($b | type) == 
     elif ($a | type) == "array" and ($b | type) == "array" then $a + $b
     elif $b == null then $a else $b end;
   reduce .[] as $x ({}; m(.; $x))' \
-  <(jq -n --arg m "$mem" '{autoMemoryDirectory: $m}') ${extra[@]+"${extra[@]}"} <(echo "$pointer") <(echo "$hooks") <(echo "$gate") \
+  <(jq -n --arg m "$mem" '{autoMemoryDirectory: $m}') <(echo "$lean") ${extra[@]+"${extra[@]}"} <(echo "$pointer") <(echo "$hooks") <(echo "$gate") \
   <(echo "$fixed") <(echo "$cleared")) || die "a file under $FM_HOME/settings is not valid JSON"
 
 flags=(-n "$name" --model "$model" --effort "$effort" --autocompact "$compact")
+[ -z "$veto" ] || flags+=(--disallowed-tools "$veto")
 case $kind in
   # Only the built-in tools named here exist, and no MCP tool at all, since a connector can write where the launcher can't see.
   advisor) flags+=(--tools "Read,Glob,Grep,Bash,WebFetch,WebSearch,SendMessage,ListAgents,ToolSearch" --disallowed-tools "mcp__*") ;;

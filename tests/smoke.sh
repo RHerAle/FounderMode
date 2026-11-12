@@ -73,7 +73,8 @@ fi
 echo "# init"
 expect "init runs" "$FM" init
 for f in ORGCHART.md BOARD.md PR.md roles.tsv roles/advisor.md roles/design.md settings/outreach.json \
-  board/precedents.md deliverables.txt forbidden-terms.tsv sourced.txt; do
+  board/precedents.md deliverables.txt forbidden-terms.tsv sourced.txt skills-by-role.json tools-by-role.json \
+  settings/coordinator.json relay.tsv relay.md facts/README.md facts/product.tsv facts/retired.tsv; do
   expect "init wrote $f" test -f "$FM_HOME/$f"
 done
 echo "# edited" >> "$FM_HOME/ORGCHART.md"
@@ -137,7 +138,8 @@ for a in intern junior senior; do
   expect "the $a runs at high effort, whatever the session's" grep -qx 'effort: high' "$ROOT/agents/$a.md"
 done
 for x in 'intern:model: haiku' 'intern:omitClaudeMd: true' 'junior:model: sonnet' 'junior:omitClaudeMd: true' \
-  'junior:disallowedTools: Agent' 'senior:model: opus' 'senior:maxTurns: 150'; do
+  'junior:disallowedTools: Agent' 'junior:tools: Read, Write, Edit, Bash, WebFetch, WebSearch, ToolSearch' \
+  'senior:model: opus' 'senior:maxTurns: 150'; do
   expect "agents/${x%%:*}.md sets ${x#*:}" grep -qx "${x#*:}" "$ROOT/agents/${x%%:*}.md"
 done
 expect "the senior reads CLAUDE.md" lacks omitClaudeMd "$(cat "$ROOT/agents/senior.md")"
@@ -153,7 +155,8 @@ expect "only the guard blocks when it can't run" \
   jq -e '[.hooks[][].hooks[] | select(.onFailure) | .command | sub(".*/"; "")] == ["irreversible-guard.sh"]' <<<"$s"
 expect "the coordinator's guard knows its kind" jq -e '.hooks.PreToolUse[0].hooks[0].args == ["coordinator"]' <<<"$(dump coordinator | arg --settings)"
 expect "default compaction window" test "$(dump engineering | arg --autocompact)" = 300000
-expect "per-role compaction window" test "$(dump coordinator | arg --autocompact)" = 1000000
+expect "per-role compaction window" test "$(dump advisor1 | arg --autocompact)" = 1000000
+expect "the coordinator compacts at the default window too" test "$(dump coordinator | arg --autocompact)" = 300000
 expect "FM_COMPACT overrides it" test "$(FM_COMPACT=500000 dump coordinator | arg --autocompact)" = 500000
 expect "a first launch starts a conversation" has --session-id < <(dump engineering)
 for r in engineering coordinator advisor1 outreach; do
@@ -166,6 +169,60 @@ s=$(FM_UNLOCK=1 dump engineering 2>/dev/null | arg --settings)
 expect "FM_UNLOCK=1 leaves the guard out of the settings" jq -e '[.hooks.PreToolUse[].matcher] == ["Agent", "*"]' <<<"$s"
 expect "and keeps the notice hook" jq -e '.hooks.UserPromptSubmit[0].hooks[0].command | endswith("/orgchart-notice.sh")' <<<"$s"
 expect "and isn't passed on to the session" lacks FM_UNLOCK "$(FM_UNLOCK=1 dry engineering 2>/dev/null)"
+
+echo "# what each request carries"
+# veto ROLE: the role's --disallowed-tools, one per line.
+veto() { dump "$1" | arg --disallowed-tools | tr ',' '\n'; }
+expect "every member loses the tools nobody uses" grep -qx Workflow <<<"$(veto engineering)"
+expect "a member loses the timers and the page tools" test "$(grep -cxE 'ScheduleWakeup|CronCreate|Artifact|ArtifactData' <<<"$(veto engineering)")" = 4
+expect "and keeps what its row turns on" lacks mcp__claude_ai_Google_Drive "$(veto engineering)"
+expect "the coordinator keeps the timers and the pages" test "$(grep -cxE 'ScheduleWakeup|Artifact|mcp__claude_ai_Claude_Docs' <<<"$(veto coordinator)")" = 0
+expect "and loses the unused ones" grep -qx SendFeedback <<<"$(veto coordinator)"
+expect "design keeps Artifact and loses the timers" test "$(grep -cx Artifact <<<"$(veto design)"):$(grep -cx CronCreate <<<"$(veto design)")" = 0:1
+expect "dev loses the drive" grep -qx mcp__claude_ai_Google_Drive <<<"$(veto dev)"
+expect "an advisor keeps its fixed lists" test "$(dump advisor1 | arg --disallowed-tools)" = 'mcp__*'
+no_veto() { ! has --disallowed-tools < <(dump "$1"); }
+expect "and so does the isolated role" no_veto outreach
+s=$(dump engineering | arg --settings)
+expect "skills off, name-only and on by group" jq -e '.skillOverrides | .loop == "off" and .["paper-lookup"] == "name-only" and .["frontend-design"] == "off"' <<<"$s"
+expect "skill descriptions cut to 250 characters" jq -e '.skillListingMaxDescChars == 250' <<<"$s"
+expect "design turns its skills on" jq -e '.skillOverrides["frontend-design"] == "on"' <<<"$(dump design | arg --settings)"
+cs=$(dump coordinator | arg --settings)
+expect "the coordinator keeps the timer skills" jq -e '.skillOverrides.loop == "on"' <<<"$cs"
+expect "and skips the product's CLAUDE.md" jq -e '.claudeMdExcludes == ["**/company/product/CLAUDE.md"]' <<<"$cs"
+expect "a member doesn't" jq -e 'has("claudeMdExcludes") | not' <<<"$s"
+expect "the isolated role gets the skill rows too" jq -e '.skillOverrides.loop == "off"' <<<"$(dump outreach | arg --settings)"
+tb=$FM_HOME/tools-by-role.json sb=$FM_HOME/skills-by-role.json
+cp "$tb" "$T/tools.json"; cp "$sb" "$T/skills.json"
+jq '.plugins = {"style@market": ["dev"]}' "$T/tools.json" > "$tb"
+expect "a plugin is off for the roles its list leaves out" jq -e '.enabledPlugins == {"style@market": false}' <<<"$(dump engineering | arg --settings)"
+expect "and on for the ones it names" jq -e '.enabledPlugins == {}' <<<"$(dump dev | arg --settings)"
+printf '%s\n' '{"enabledPlugins": {"style@market": true}}' > "$FM_HOME/settings/engineering.json"
+expect "a role's settings file outranks the row" jq -e '.enabledPlugins == {"style@market": true}' <<<"$(dump engineering | arg --settings)"
+rm "$FM_HOME/settings/engineering.json"
+jq '.roles.dev.design = "maybe"' "$T/skills.json" > "$sb"
+refuse "refuses a skill value other than on, name-only or off" "skills-by-role.json" dry dev
+cp "$T/skills.json" "$sb"; echo '{' > "$tb"
+refuse "refuses a tools file that isn't JSON" "tools-by-role.json" dry dev
+rm "$tb" "$sb"
+expect "without the two files, no tool goes" no_veto engineering
+expect "and no skill" jq -e 'has("skillOverrides") | not' <<<"$(dump engineering | arg --settings)"
+cp "$T/tools.json" "$tb"; cp "$T/skills.json" "$sb"
+printf 'legal\t150000\n' >> "$FM_HOME/relay.tsv"
+expect "a role in relay.tsv gets the threshold hook" jq -e --arg c "$ROOT/hooks/relay-threshold.sh" --arg h "$FM_HOME" \
+  '.hooks.UserPromptSubmit[0].hooks[2] | .command == $c and .args == [$h, "legal", "150000"]' <<<"$(dump legal | arg --settings)"
+expect "a role outside it doesn't" lacks relay-threshold "$(dump engineering | arg --settings)"
+printf 'dev\tlots\n' >> "$FM_HOME/relay.tsv"
+refuse "refuses a threshold that isn't a number" "relay.tsv" dry dev
+sed -i '/^dev\t/d' "$FM_HOME/relay.tsv"
+rt() { jq -cn --arg p "$1" '{transcript_path: $p}' | "$ROOT/hooks/relay-threshold.sh" "${@:2}"; }
+printf '%s\n' '{"message":{"usage":{"input_tokens":5,"cache_creation_input_tokens":1000,"cache_read_input_tokens":160000}}}' \
+  '{"type":"system"}' > "$T/relay.jsonl"
+expect "past the threshold, the hook warns" grep -qF 'about 161k tokens, past 150k' <<<"$(rt "$T/relay.jsonl" "$FM_HOME" legal 150000)"
+expect "and names the template and the folder" grep -qF "$FM_HOME/work/legal/relay/" <<<"$(rt "$T/relay.jsonl" "$FM_HOME" legal 150000)"
+expect "below it, nothing" test -z "$(rt "$T/relay.jsonl" "$FM_HOME" legal 170000)"
+expect "without its arguments, nothing" test -z "$(rt "$T/relay.jsonl")"
+expect "without a transcript, nothing" test -z "$(rt "$T/none.jsonl" "$FM_HOME" legal 1)"
 
 echo "# conversations"
 mkdir -p "$FM_HOME/state"
@@ -710,6 +767,15 @@ expect "finds the attribution line" grep -qF 'line 2: [attribution]' <<<"$o"
 expect "finds the secret and hides it" grep -qx "$D/bad.txt: line 3: \[secret\]" <<<"$o"
 printf 'a &rarr; b\n' > "$D/ent.html"
 expect "reads an HTML entity as the character" exit1 ck "$D/ent.html"
+printf '# old\tnew\nOur First Sensor\tseveral sensors\n# a comment\tx\n' > "$D/retired.tsv"
+printf 'We sell our first sensor %s.\n' $'\u2014' > "$D/old.md"
+o=$(ck --retired "$D/retired.tsv" "$D/old.md")
+expect "--retired finds an old phrase in any letter case" grep -qF '[retired phrase] our first sensor' <<<"$o"
+expect "and keeps the other rules" grep -qF '[dash or arrow]' <<<"$o"
+o=$(node "$ROOT/bin/check-text.js" --retired-only "$D/retired.tsv" "$D/old.md")
+expect "--retired-only checks the old phrases alone" test "$(grep -c . <<<"$o")" = 1
+printf 'several sensors\n' > "$D/new.md"
+expect "a text with the new phrase passes" node "$ROOT/bin/check-text.js" --retired-only "$D/retired.tsv" "$D/new.md"
 printf '%s\n' 'Use `a %s b` in code.' '```' 'x %s y' '```' > "$D/code.md"
 sed -i "s/%s/$(printf '\u2192')/g" "$D/code.md"
 expect "Markdown code doesn't count for dashes and arrows" ck "$D/code.md"
@@ -769,6 +835,22 @@ echo "$D/*.md" >> "$FM_HOME/deliverables.txt"
 expect "the hook reports on a deliverable" grep -qF 'confidential name' <<<"$(jq -cn --arg f "$D/names.md" '{tool_input: {file_path: $f}}' | "$ROOT/hooks/deliverable-check.sh" "$FM_HOME")"
 expect "and stays quiet on a clean one" test -z "$(jq -cn --arg f "$D/clean.md" '{tool_input: {file_path: $f}}' | "$ROOT/hooks/deliverable-check.sh" "$FM_HOME")"
 expect "and on a file outside the list" test -z "$(jq -cn --arg f "$D/bad.txt" '{tool_input: {file_path: $f}}' | "$ROOT/hooks/deliverable-check.sh" "$FM_HOME")"
+cp "$FM_HOME/facts/retired.tsv" "$T/retired.bak"
+printf 'our first sensor\tseveral sensors\t2030-01-12\tcoordinator\tf:1\n' >> "$FM_HOME/facts/retired.tsv"
+mkdir -p "$FM_HOME/memory/dev"
+printf 'We sell our first sensor %s here.\n' $'\u2014' > "$FM_HOME/memory/dev/note.md"
+dc() { jq -cn --arg f "$1" '{tool_input: {file_path: $f}}' | "$ROOT/hooks/deliverable-check.sh" "$FM_HOME"; }
+o=$(dc "$FM_HOME/memory/dev/note.md")
+expect "the hook flags a retired phrase in a memory" grep -qF 'retired phrase' <<<"$o"
+expect "and only that, since a memory stays inside" lacks 'dash or arrow' "$o"
+printf 'Fine.\n' > "$FM_HOME/memory/dev/x.md"
+expect "it stays quiet on a memory without one" test -z "$(dc "$FM_HOME/memory/dev/x.md")"
+cp "$FM_HOME/memory/dev/note.md" "$D/names-old.md"
+printf '%s\n' "$D/names-old.md" >> "$FM_HOME/deliverables.txt"
+expect "and flags one in a deliverable" grep -qF 'retired phrase' <<<"$(dc "$D/names-old.md")"
+sed -i '$d' "$FM_HOME/deliverables.txt"
+cp "$T/retired.bak" "$FM_HOME/facts/retired.tsv"
+rm -rf "$FM_HOME/memory/dev"
 expect "without its argument it does nothing" test -z "$(jq -cn --arg f "$D/names.md" '{tool_input: {file_path: $f}}' | FM_HOME=$FM_HOME "$ROOT/hooks/deliverable-check.sh")"
 echo "$D/*.tex" >> "$FM_HOME/sourced.txt"
 o=$(jq -cn --arg f "$D/report.tex" '{tool_input: {file_path: $f}}' | "$ROOT/hooks/deliverable-check.sh" "$FM_HOME")
@@ -831,6 +913,17 @@ if command -v python3 >/dev/null; then
   refuse "q refuses a write" "q takes only SELECT or WITH" "$FM" db q "DELETE FROM pending"
   refuse "and a write inside a WITH" "query refused" "$FM" db q "WITH x AS (SELECT 1) DELETE FROM pending"
   expect "the views leave no database file" test -z "$(find "$FM_HOME/pending" -type f ! -name events.tsv)"
+  for x in facts-summary retire find-conversation; do expect "the $x self-test passes" "$ROOT/bin/$x" --selftest; done
+  printf 'p1\tSeveral sensors\t2030-01-10\tnotes.md:1\tyes\n' >> "$FM_HOME/facts/product.tsv"
+  expect "the facts view reads the topic files" test "$("$FM" db q "SELECT topic, id FROM facts" | tail -n 1)" = "product	p1"
+  expect "summary --dry shows the block" grep -qF '+- Several sensors (product, since 2030-01-10)' <<<"$("$FM" summary --dry)"
+  expect "and writes nothing" lacks 'today:start' "$(cat "$FM_HOME/ORGCHART.md")"
+  mkdir -p "$FM_HOME/work/dev/notes"; echo 'Several sensors, said the call.' > "$FM_HOME/work/dev/notes/call.md"
+  expect "retire --dry counts through the launcher" grep -q '^dry: 1 places in 1 files' <<<"$("$FM" retire 'Several sensors' 'x' --by engineering --source f:1 --dry)"
+  expect "the retired view stays empty after a dry run" test "$("$FM" db q "SELECT count(*) FROM retired" | tail -n 1)" = 0
+  refuse "find-conversation refuses the isolated role" "refused" env FM_ROLE=outreach "$FM" find-conversation x
+  expect "and lists a member's conversations" env FM_ROLE=dev "$FM" find-conversation --list
+  cp "$ROOT/templates/facts/product.tsv" "$FM_HOME/facts/product.tsv"; rm -rf "$FM_HOME/work/dev/notes"
   rm -rf "$FM_HOME/pending"
 else
   echo "skip  python3 is not installed: the pilot's cases didn't run"

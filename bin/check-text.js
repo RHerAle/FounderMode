@@ -2,7 +2,7 @@
 // Copyright 2026 RHerAle
 // SPDX-License-Identifier: Apache-2.0
 // Part of Founder Mode: https://github.com/RHerAle/FounderMode
-// check-text.js [--terms FILE] [--sources] FILE...
+// check-text.js [--terms FILE] [--sources] [--retired FILE]... [--retired-only FILE]... FILE...
 // Checks a text before it leaves the company: dashes and arrows, AI attribution lines, secrets, the names in the
 // terms file and the words that mark a guess. Reads .md, .txt, .html and .tex. Code blocks and inline code in
 // Markdown, and comments in LaTeX, don't count for dashes, arrows and guesses; every other rule reads them too. The
@@ -15,6 +15,9 @@
 // the text. A prose paragraph is a block between blank lines, outside code, with at least MIN_WORDS words. Headings
 // and LaTeX spacing commands at its top don't count; after them it opens with none of a table, a quote, an HTML tag
 // other than <p>, \item, or a LaTeX command that leaves no text, such as \begin or \caption.
+// With --retired, the old phrases of a retired.tsv (facts/README.md, its first column) are findings too, in code as
+// well. --retired-only checks those phrases and nothing else: for memories, role files and the org chart, which don't
+// leave the company.
 // One finding per line of output. Exit 0 when clean, 1 with findings, 2 when a file can't be read.
 'use strict';
 const fs = require('node:fs');
@@ -62,6 +65,11 @@ function terms(file) {
   }
   return { rules, tags };
 }
+
+// The old phrases of retired.tsv files, as rules.
+const retired = files => files.flatMap(f => fs.readFileSync(f, 'utf8').split('\n'))
+  .filter(l => l.trim() && !l.startsWith('#')).map(l => l.split('\t')[0].trim()).filter(t => t)
+  .map(t => ['retired phrase', new RegExp(word(t), 'gi'), true, false]);
 
 const unescape = t => t.replace(/&mdash;/g, '—').replace(/&ndash;/g, '–').replace(/&rarr;/g, '→')
   .replace(/&larr;/g, '←').replace(/&rArr;/g, '⇒')
@@ -156,15 +164,19 @@ function check(file, rules, tags, sources) {
 }
 
 function main(argv) {
-  let termFile = null, sources = false;
+  let termFile = null, sources = false, only = false;
+  const old = [];
   for (;;) {
     if (argv[0] === '--terms') { termFile = argv[1]; argv = argv.slice(2); }
+    else if (argv[0] === '--retired' || argv[0] === '--retired-only') {
+      only = only || argv[0] === '--retired-only'; old.push(argv[1]); argv = argv.slice(2);
+    }
     else if (argv[0] === '--sources') { sources = true; argv = argv.slice(1); }
     else break;
   }
-  let t;
-  try { t = terms(termFile); } catch (e) { console.log(e.message); return 2; }
-  const rules = RULES.concat(t.rules);
+  let t, r;
+  try { t = terms(termFile); r = retired(old); } catch (e) { console.log(e.message); return 2; }
+  const rules = only ? r : RULES.concat(t.rules, r);
   let found = 0, unread = 0;
   for (const f of argv) {
     let r;

@@ -1,0 +1,21 @@
+{
+  "_note": "Read by bin/founder-mode at each launch. A group set to off goes into the role's --disallowed-tools, which keeps its definitions out of every request; a role without a row, or a group its row leaves out, takes the default row. Members and the coordinator only: advisors and the isolated role have fixed tool lists. Before you switch a group off, count its uses per role over 14 days. plugins maps a plugin (name@marketplace) to the roles that load it; every other role gets it disabled.",
+  "groups": {
+    "unused": ["Workflow", "SendFeedback", "NotebookEdit", "EnterWorktree", "ExitWorktree", "EnterPlanMode", "ExitPlanMode",
+      "ReadMcpResourceTool", "ListMcpResourcesTool", "ArtifactComments"],
+    "timers": ["ScheduleWakeup", "CronCreate", "CronDelete", "CronList"],
+    "pages": ["Artifact"],
+    "page-data": ["ArtifactData"],
+    "docs": ["mcp__claude_ai_Claude_Docs"],
+    "calendar": ["mcp__claude_ai_Google_Calendar"],
+    "drive": ["mcp__claude_ai_Google_Drive"]
+  },
+  "roles": {
+    "default": {"unused": "off", "timers": "off", "pages": "off", "page-data": "off", "docs": "off", "calendar": "off", "drive": "on"},
+    "coordinator": {"timers": "on", "pages": "on", "page-data": "on", "docs": "on", "calendar": "on"},
+    "design": {"pages": "on"},
+    "finance": {"page-data": "on", "calendar": "on"},
+    "dev": {"drive": "off"}
+  },
+  "plugins": {}
+}

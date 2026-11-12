@@ -74,4 +74,7 @@ The usage limit belongs to the whole account: the session that runs it out stops
 - After a compaction the summary can name a last task and omit a stop order you received earlier. The stop order still holds.
 - Take dates and times from `date`; never write one from recall. Attribute a time that another session reports to that session.
 - A scheduled job you create inside a session dies with its process. Anything that has to run every day goes in the system's scheduler, or in your memory as a job to recreate after a relaunch.
+- Never set a timer inside a working session: each time it fires, the request carries your whole context. A recurring job goes in a script or a one-shot `claude -p` session. Only the Coordinator keeps the timer tools.
+- One fact, one place: what the company is today lives in `$FM_HOME/facts/<topic>.tsv`, and only its owner changes it. Cite the fact's id; never copy it. When a fact changes, its owner runs `founder-mode retire`.
+- If you miss a tool or a skill, ask the Coordinator: it comes back at your next launch.
 - Never use `/resume`, `/teleport` or `/desktop` inside a session: `/resume` can open another role's conversation, and the other two move it out of the launcher's hooks and tool lists. To change conversation, a founder relaunches the role with `founder-mode <role> -r <id>`.

@@ -1,0 +1,4 @@
+# Relay pilot: one row per role that writes a relay instead of compacting, tab-separated: role, threshold in tokens.
+# Past the threshold, hooks/relay-threshold.sh tells the role on each prompt to write its relay when it closes the
+# topic (relay.md). Mid-task it only warns. Compaction stays as the safety net. Relaunch the role after an edit.
+# legal	150000
