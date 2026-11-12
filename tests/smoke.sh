@@ -4,7 +4,7 @@
 # Part of Founder Mode: https://github.com/RHerAle/FounderMode
 # Smoke test. Runs the launcher dry against a throwaway HOME, launches it against a stand-in claude, feeds the hooks
 # and the stalled-session report sample input, and runs the README's quick start in a clean home. It never starts the
-# real claude. Needs bash, jq and node, and runs shellcheck when it is installed.
+# real claude. Needs bash, jq and node, and runs shellcheck when it is installed and the pilot's cases when python3 is.
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 FM=$ROOT/bin/founder-mode
@@ -579,7 +579,7 @@ refuse "then it is refused again" "went out" fmail "$W/c.md" monday-numbers
 fresh
 printf '%s\told.md\tYearly budget for the company\n' "$(date -d '2 days ago' '+%F %T')" > "$box/sent.tsv" 2>/dev/null \
   || { mkdir -p "$box"; printf '%s\told.md\tYearly budget for the company\n' "$(date -d '2 days ago' '+%F %T')" > "$box/sent.tsv"; }
-note d.md 'Test calendar for the radar' 'Body.'
+note d.md 'Test calendar for the demo' 'Body.'
 expect "an old three-column row doesn't block a new topic" fmail "$W/d.md" test-calendar
 aged d.md
 expect "and the gate reads it" fsend d.md
@@ -644,11 +644,11 @@ expect "a public provider counts by address" dpass fm-smoke-pat@gmail.com 'Calen
 dlog fm-smoke-pat@gmail.com 'Calendar'
 expect "so another address there passes" dpass fm-smoke-joe@gmail.com 'Budget'
 expect "and the same one doesn't" exit2x dpass fm-smoke-pat@gmail.com 'Budget'
-row 8 x@gamma.example 'Pilot proposal for the port'
-expect "after 8 days, a subject close to one the company got within 30 is refused" exit2x dpass x@gamma.example 'Pilot proposal for port, second version'
-expect "and a different one passes" dpass y@gamma.example 'Radar test calendar'
-row 31 z@delta.example 'Pilot proposal for the port'
-expect "a subject the company got 31 days ago passes" dpass z@delta.example 'Pilot proposal for the port'
+row 8 x@gamma.example 'Pilot proposal for the client'
+expect "after 8 days, a subject close to one the company got within 30 is refused" exit2x dpass x@gamma.example 'Pilot proposal for client, second version'
+expect "and a different one passes" dpass y@gamma.example 'Demo test calendar'
+row 31 z@delta.example 'Pilot proposal for the client'
+expect "a subject the company got 31 days ago passes" dpass z@delta.example 'Pilot proposal for the client'
 expect "a correction is refused" exit2x dpass new@eps.example 'Correction to the proposal'
 expect "and so is one in the body" exit2x dpass new@eps.example 'Pilot' $'Hello.\nI was wrong about the figure.'
 expect "a call without recipients is refused" exit2x og pre <<<'{"tool_input":{"subject":"Hi","body":"x"}}'
@@ -814,6 +814,27 @@ expect "every GitHub link in SKILLS.md is pinned to a commit" \
   test -z "$(grep -oE 'https://github.com/[^)]*' "$ROOT/SKILLS.md" | grep -vE '^https://github.com/[^/]+/[^/]+/tree/[0-9a-f]{40}(/|$)')"
 expect "and so is every one in the README's skills table" \
   test -z "$(sed -n '/^## Skills we use most/,/^## Limits/p' "$ROOT/README.md" | grep -oE 'https://github.com/[^)]*' | grep -vE '/tree/[0-9a-f]{40}(/|$)')"
+
+echo "# the pending log and its SQL views (pilot)"
+if command -v python3 >/dev/null; then
+  expect "the pilot's self-test passes" "$ROOT/bin/db" --selftest
+  refuse "refuses a write from a role that doesn't write" "FM_ROLE must be" env FM_ROLE=advisor1 "$FM" db open --owner dev --source f:1 'An item'
+  refuse "refuses a write without a source" "source: missing" env FM_ROLE=dev "$FM" db open --owner legal 'An item'
+  refuse "refuses a secret pattern and doesn't repeat it" "text: holds a secret pattern" env FM_ROLE=dev "$FM" db open --owner legal --source f:1 "token=$(printf 'x9%.0s' 1 2 3 4)"
+  expect "opens an item through the launcher" env FM_ROLE=dev "$FM" db open --owner legal --source 'notes.md:3' --due 2001-01-01 'Send the form'
+  item=$("$FM" db pending | awk -F'\t' 'NR == 2 { print $1 }')
+  expect "lists it as pending and overdue" test "$("$FM" db overdue | cut -f2,6 | tail -n 1)" = "legal	Send the form"
+  refuse "a third role can't close it" "only the owner" env FM_ROLE=design "$FM" db close "$item" --source f:2
+  expect "its owner closes it" env FM_ROLE=legal "$FM" db close "$item" --source f:2 done
+  expect "the log only grew" test "$(grep -c "	$item	" "$FM_HOME/pending/events.tsv")" = 2
+  expect "q reads the views" test "$("$FM" db q "SELECT state, creator FROM pending" | tail -n 1)" = "closed	dev"
+  refuse "q refuses a write" "q takes only SELECT or WITH" "$FM" db q "DELETE FROM pending"
+  refuse "and a write inside a WITH" "query refused" "$FM" db q "WITH x AS (SELECT 1) DELETE FROM pending"
+  expect "the views leave no database file" test -z "$(find "$FM_HOME/pending" -type f ! -name events.tsv)"
+  rm -rf "$FM_HOME/pending"
+else
+  echo "skip  python3 is not installed: the pilot's cases didn't run"
+fi
 
 echo "# stalled sessions"
 ids=55555555-5555-4555-8555-555555555555

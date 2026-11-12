@@ -9,6 +9,7 @@
 #   founder-mode stalled [--hook]                      list sessions whose last entry is an API error
 #   founder-mode delegations [<id> <status> [note]]    list the subagent calls nobody has marked, or mark one
 #   founder-mode mail <file> <topic>                   leave a message for the other founder (bin/founder-mail.sh)
+#   founder-mode db <order> [args]                     pilot: the log of pending items and its SQL views (bin/db, needs python3)
 #
 # FM_HOME           where the org chart, roles and state live (default ~/.founder-mode)
 # FM_DRY_RUN=1      print the claude command and change nothing
@@ -43,7 +44,7 @@ alive() {
 usage() {
   local roles=
   [ -f "$FM_HOME/roles.tsv" ] && roles=$(awk -F'\t' '!/^#/ && NF { printf "%s%s", s, $1; s = "|" }' "$FM_HOME/roles.tsv")
-  echo "usage: founder-mode init | stalled [--hook] | delegations [<id> <status> [note]] | mail <file> <topic> | ${roles:-<role>} [-r [id] | --new] [args]" >&2
+  echo "usage: founder-mode init | stalled [--hook] | delegations [<id> <status> [note]] | mail <file> <topic> | db <order> [args] | ${roles:-<role>} [-r [id] | --new] [args]" >&2
   exit 2
 }
 
@@ -71,6 +72,7 @@ case ${1:-} in
   init) init; exit 0 ;;
   stalled) shift; exec node "$ROOT/bin/stalled.js" "$@" ;;
   delegations) shift; exec "$ROOT/bin/delegations.sh" "$FM_HOME" "$@" ;;
+  db) shift; command -v python3 >/dev/null || die "db needs python3"; FM_HOME=$FM_HOME exec "$ROOT/bin/db" "$@" ;;
   ''|-h|--help) usage ;;
 esac
 
