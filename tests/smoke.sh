@@ -579,7 +579,7 @@ refuse "then it is refused again" "went out" fmail "$W/c.md" monday-numbers
 fresh
 printf '%s\told.md\tYearly budget for the company\n' "$(date -d '2 days ago' '+%F %T')" > "$box/sent.tsv" 2>/dev/null \
   || { mkdir -p "$box"; printf '%s\told.md\tYearly budget for the company\n' "$(date -d '2 days ago' '+%F %T')" > "$box/sent.tsv"; }
-note d.md 'Test calendar for the radar' 'Body.'
+note d.md 'Test calendar for the demo' 'Body.'
 expect "an old three-column row doesn't block a new topic" fmail "$W/d.md" test-calendar
 aged d.md
 expect "and the gate reads it" fsend d.md
@@ -644,11 +644,11 @@ expect "a public provider counts by address" dpass fm-smoke-pat@gmail.com 'Calen
 dlog fm-smoke-pat@gmail.com 'Calendar'
 expect "so another address there passes" dpass fm-smoke-joe@gmail.com 'Budget'
 expect "and the same one doesn't" exit2x dpass fm-smoke-pat@gmail.com 'Budget'
-row 8 x@gamma.example 'Pilot proposal for the port'
-expect "after 8 days, a subject close to one the company got within 30 is refused" exit2x dpass x@gamma.example 'Pilot proposal for port, second version'
-expect "and a different one passes" dpass y@gamma.example 'Radar test calendar'
-row 31 z@delta.example 'Pilot proposal for the port'
-expect "a subject the company got 31 days ago passes" dpass z@delta.example 'Pilot proposal for the port'
+row 8 x@gamma.example 'Pilot proposal for the client'
+expect "after 8 days, a subject close to one the company got within 30 is refused" exit2x dpass x@gamma.example 'Pilot proposal for client, second version'
+expect "and a different one passes" dpass y@gamma.example 'Demo test calendar'
+row 31 z@delta.example 'Pilot proposal for the client'
+expect "a subject the company got 31 days ago passes" dpass z@delta.example 'Pilot proposal for the client'
 expect "a correction is refused" exit2x dpass new@eps.example 'Correction to the proposal'
 expect "and so is one in the body" exit2x dpass new@eps.example 'Pilot' $'Hello.\nI was wrong about the figure.'
 expect "a call without recipients is refused" exit2x og pre <<<'{"tool_input":{"subject":"Hi","body":"x"}}'

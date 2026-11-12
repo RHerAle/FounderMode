@@ -4,7 +4,7 @@ Founder Mode turns a handful of Claude Code sessions into a small company. Each 
 
 Plenty of tools run Claude Code agents in parallel, Claude Code's own agent teams among them. Founder Mode keeps each session in one role, with its own memory and conversation, for weeks, under a chain of authority that ends at a human.
 
-It is a bash launcher, a set of markdown templates, three subagent definitions and eight hooks around stock Claude Code. It runs no server or daemon and needs only bash, jq and node.
+It is a bash launcher, a set of markdown templates, three subagent definitions and ten hooks around stock Claude Code. It runs no server or daemon and needs only bash, jq and node.
 
 ## What's in it
 
@@ -244,7 +244,7 @@ The rules live in markdown you edit: `ORGCHART.md` for every session, `roles/*.m
 
 ## Skills we use most
 
-Counted on 26-10-2026 over 883 local Claude Code transcripts: each call to the Skill tool, plus each direct read of a skill's `SKILL.md`. Internal skills are left out.
+Counted on 26-10-2026 over several hundred local Claude Code transcripts: each call to the Skill tool, plus each direct read of a skill's `SKILL.md`. Internal skills are left out.
 
 | Skill | Uses | What we use it for | Source | Licence |
 |---|---|---|---|---|

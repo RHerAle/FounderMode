@@ -148,16 +148,16 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 
 ### The file every session loads shapes what it says about the product
 
-- **What happened:** A founder noticed that the sessions described a multi-sensor product as a radar product. The project file that every session loads named radar nine times and optical, thermal or multispectral sensors not once. The role memories leaned the same way, and a hosting provider the company had dropped still showed up in seventeen memories and kept coming back in answers.
+- **What happened:** A founder noticed that the sessions described the whole product as one of its parts. The project file that every session loads named that part nine times and the other parts not once. The role memories leaned the same way, and a supplier the company had dropped still showed up in seventeen memories and kept coming back in answers.
 - **Cause:** What a session knows about the product comes from the files it loads on every request and from its memory. A correction made in the chat disappears with `/clear` or a compaction.
-- **Fix:** Correct the source, not the conversation: rebalance the project file and the memories, and keep an inventory of what the product does, measured in the code. Before describing the product or its maturity, a session reads that inventory. The inventory also stops the opposite error: in this case radar was the only sensor the server analysed with its own models, so the performance figures still describe the radar chain alone.
+- **Fix:** Correct the source, not the conversation: rebalance the project file and the memories, and keep an inventory of what the product does, measured in the code. Before describing the product or its maturity, a session reads that inventory. The inventory also stops the opposite error, which is to credit the whole product with a figure measured on one part: each figure names the part it was measured on.
 - **Where:** the project's CLAUDE.md and each role's memory folder. No mechanism.
 
 ## Authority
 
 ### Only founders merge, deploy, spend, sign or send
 
-- **What happened:** An agent told to work on its own read that as permission to merge several PRs. Later, a founder's passing "fine" arrived while a PR waited for approval, and the coordinator had to rule that it approved nothing.
+- **What happened:** An agent told to work on its own read that as permission to merge several PRs. Later, a passing word of assent arrived while a PR waited for approval, and the coordinator had to rule that it approved nothing.
 - **Cause:** A standing instruction to keep working reads like a blanket permission.
 - **Fix:** An approval covers what it names. The org chart lists what only the founders authorize, and the guard blocks the commands that merge.
 - **Where:** `templates/ORGCHART.md` (People), `hooks/irreversible-guard.sh`.
@@ -401,8 +401,8 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 
 - **What happened:** A founder asked the sessions to leave part of the account's weekly limit to the founders, who use the same account themselves.
 - **Cause:** The limit belongs to the account, and no rule stopped the sessions before it ran out.
-- **Fix:** A founder sets a weekly cap below the account's limit, in a file only a founder edits, and the sessions stop at it until the weekly reset. A hook that blocks at the cap would need a live reading of the meter, and this repo reads the meter only through `/usage`.
-- **Where:** `templates/ORGCHART.md` (Pace). No mechanism.
+- **Fix:** A founder sets a weekly cap below the account's limit, in a file only a founder edits, and the sessions stop at it until the weekly reset. `hooks/weekly-cap.sh` refuses every tool and every new prompt once the week reaches the cap, and the coordinator still takes a founder's prompt and answers without tools. The hook needs a reading of the meter under two hours old in `state/usage.json`, and Founder Mode ships no program that writes one. Without that reading the hook does nothing and the rule binds in prose only.
+- **Where:** `templates/ORGCHART.md` (Pace), `hooks/weekly-cap.sh`, `tests/smoke.sh`.
 
 ### Two teams on one account
 
@@ -448,9 +448,9 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 
 ### Three tiers of subagent, measured
 
-- **What happened:** A founder approved the board's plan to replace the single checker with three tiers: an intern on Haiku that only returns evidence, a junior on Sonnet that drafts and never delivers, and a senior on Opus with the project file. All three run at `high`, and a hook refuses the subagent types that run at the session's model and effort. A week before the change and a week after it, counted at API prices: the cost per request of the main sessions fell from $0.213 to $0.124 (42% less). On the same model it fell from $0.127 to $0.093 on Opus (26% less) and from $0.450 to $0.311 on Fable (31% less). Subagent requests at `max` or `xhigh` went from 3,826 to 0, and subagent cost from $199 to $27. Output per main request went from 2,223 to 1,165 tokens; cache read per request stayed close, at 195,239 and 190,128 tokens.
+- **What happened:** A founder approved the board's plan to replace the single checker with three tiers: an intern on Haiku that only returns evidence, a junior on Sonnet that drafts and never delivers, and a senior on Opus with the project file. All three run at `high`, and a hook refuses the subagent types that run at the session's model and effort. A week before the change and a week after it, counted at API prices: the cost per request of the main sessions fell from $0.213 to $0.124 (42% less). On the same model it fell from $0.127 to $0.093 on Opus (26% less) and from $0.450 to $0.311 on Fable (31% less). Subagent requests at `max` or `xhigh` fell to none, and subagent cost fell by 86%. Output per main request went from 2,223 to 1,165 tokens; cache read per request stayed close, at 195,239 and 190,128 tokens.
 - **Cause:** Before the change, a subagent without its own model and effort took the session's, and most sessions ran at `max` or `xhigh`.
-- **Fix:** Start with the lowest tier that can do the job and go up one when it gets stuck. Anything longer than a screen goes to the intern or the junior. Limits of the measure: the two weeks held different work, the figures are API prices and not the share of the plan's limit, and the intern was barely used (67 Haiku requests against 698 on Sonnet). A look back over 56 delegations found no invented result, and 5 results used without a visible check. Zero found is not zero, so a hook now logs every call to a tier, and the session marks each one once it has checked it.
+- **Fix:** Start with the lowest tier that can do the job and go up one when it gets stuck. Anything longer than a screen goes to the intern or the junior. Limits of the measure: the two weeks held different work, the figures are API prices and not the share of the plan's limit, and the intern was barely used (about one Haiku request for every ten on Sonnet). A look back over 56 delegations found no invented result, and 5 results used without a visible check. Zero found is not zero, so a hook now logs every call to a tier, and the session marks each one once it has checked it.
 - **Where:** `agents/`, `hooks/subagent-tier.sh`, `hooks/delegation-log.sh`, `bin/delegations.sh`, `templates/ORGCHART.md` (Pace).
 
 ### A new model or effort costs a resumed conversation
@@ -643,7 +643,7 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 
 ### One topic, one email, an hour after writing it
 
-- **What happened:** A session sent the other founder two emails on the same topic two minutes apart. The second corrected a claim in the first, which the session had copied from another session's report without checking it. The founders had agreed the day before on one email per topic, and that rule lived in prose only. Writing twice about one thing to the other founder is serious; to a customer or a partner it is unforgivable.
+- **What happened:** A session sent two emails on the same topic minutes apart to someone inside the company. The second corrected a claim in the first, which the session had copied from another session's report without checking it. The rule of one email per topic already existed, in prose only. Writing twice about one thing inside the company is serious; to a customer or a partner it is unforgivable.
 - **Cause:** Nothing compared a send with the ones before it, and nothing made a session wait between writing and sending.
 - **Fix:** Mail to the other founder carries a topic. `founder-mode mail` refuses a topic that already went out, a subject that corrects an earlier email and a subject close to a recent one under another topic. Its gate holds each text for an hour, and a second run on the same topic replaces the waiting text and restarts the hour. Mail outside the company, drafts and the one-send grant alike, reaches a person or a company once a week at most, with no corrections and no subject close to one that company got within a month. Only a line a founder writes under `$FM_HOME/state` lifts one of these limits, for one send. The guard blocks any command that names those files, and a deny rule keeps every role's file tools out of `state/`.
 - **Where:** `bin/founder-mail.sh`, `bin/mail-rules.sh`, `hooks/founder-mail-gate.sh`, `hooks/outbound-gate.sh`, `hooks/one-send.sh`, `hooks/irreversible-guard.sh`, `bin/founder-mode`, `tests/smoke.sh`.
