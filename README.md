@@ -210,7 +210,7 @@ A subagent without its own `model` and `effort` runs at the session's, and some 
 
 A session starts with the lowest tier that can do the job and goes up one when a tier gets stuck. The intern and the junior skip CLAUDE.md and the schemas of the tools they don't have, so each request names its sources, the files it may touch, a cap on tool calls and every rule it needs; a junior told to work in a repository reads that repository's CLAUDE.md first. Their prompts forbid commits and pushes. They keep Bash, and in a session the launcher started the guard fires inside subagents too.
 
-`hooks/subagent-tier.sh` refuses general-purpose, Explore, Plan, a fork and a call without a type, since all of them run at the session's model and effort. `hooks/delegation-log.sh` logs each call to a tier. Once the session has checked the result, it marks the entry:
+`hooks/subagent-tier.sh` refuses general-purpose, Explore, Plan, a fork and a call without a type, since all of them run at the session's model and effort. It also refuses a call to a tier that sets a model other than the tier's, or an effort of xhigh or max, because the call's model and effort win over the tier's. `hooks/delegation-log.sh` logs each call to a tier. Once the session has checked the result, it marks the entry:
 
 ```bash
 founder-mode delegations                                  # your unmarked calls (every role's, run from a terminal)
