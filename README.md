@@ -192,7 +192,7 @@ The weekly cap needs two files under `$FM_HOME`: `weekly-cap`, with the cap as a
 
 Three switches outside the hooks turn them all off, the guard and the send gate included, as `--safe-mode` and `--bare` do. They are `disableAllHooks` in your user, project or local settings, and `CLAUDE_CODE_SAFE_MODE` or `CLAUDE_CODE_SIMPLE` in your shell. The launcher sets `disableAllHooks` to false in `--settings` and starts the session with both variables empty. It warns on stderr when your shell sets either variable or your user settings set `disableAllHooks`. A `disableAllHooks` in managed settings still wins.
 
-Claude Code lets a call through when its hook can't start or times out, unless the hook sets `onFailure: "block"` (2.1.295 and later). The guard and the one-send hook set it, so Claude Code blocks the call when either script is missing, crashes or times out. The guard's timeout is 30 seconds. On Linux with bash 5.3 it read 1 MB in 4 to 7 seconds, whether the command held plain text, quotes, substitutions, lines split with a backslash, `gh` calls or `gh api` calls.
+Claude Code lets a call through when its hook can't start or times out, unless the hook sets `onFailure: "block"` (2.1.295 and later). Four PreToolUse entries set it: the guard, the outbound gate on drafts, the one-send hook and the founder-mail gate. Claude Code blocks the call when one of those scripts is missing, crashes or times out. The guard's timeout is 30 seconds. On Linux with bash 5.3 it read 1 MB in 4 to 7 seconds, whether the command held plain text, quotes, substitutions, lines split with a backslash, `gh` calls or `gh api` calls.
 
 ### The Design role's skills
 
@@ -316,7 +316,7 @@ Two plugins run in every session without being called, so a count of calls misse
 - **Agent view.** The role sessions can't open agent view or move to the background. Open `claude agents` from another terminal.
 - **Two launchers on one dead lock.** If a launcher dies and two new ones start for the same role in the same instant, both get through.
 - **No scheduler.** You open each role in a terminal, and the coordinator relays work by message.
-- **Versions.** Claude Code 2.1.290 and 2.1.295 closed ways around `--restricted` and `--tools`, so the launcher checks `claude --version` before a real launch and refuses anything older than 2.1.295. Tested on Linux with bash 5.3.
+- **Versions.** Claude Code 2.1.290 and 2.1.295 closed ways around `--restricted` and `--tools`, so the launcher checks `claude --version` before a real launch and refuses anything older than 2.1.295. Tested on Linux with bash 5.3. The mail scripts use GNU options, `date -d`, `stat -c` and `\L` in a sed replacement, that the BSD tools on macOS don't accept.
 
 ## Forks and variants
 

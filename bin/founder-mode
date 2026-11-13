@@ -5,7 +5,7 @@
 # founder-mode: one long-lived Claude Code session per role, run like a small company.
 #
 #   founder-mode init                                  copy templates/ into $FM_HOME, never overwriting a file
-#   founder-mode <role> [-r [id] | --new] [args]       open the role's session (extra claude flags: member roles only)
+#   founder-mode <role> [-r [id] | --new] [args]       open the role's session (extra claude flags: member and coordinator roles only)
 #   founder-mode stalled [--hook]                      list sessions whose last entry is an API error
 #   founder-mode delegations [<id> <status> [note]]    list the subagent calls nobody has marked, or mark one
 #   founder-mode mail <file> <topic>                   leave a message for the other founder (bin/founder-mail.sh)
@@ -202,8 +202,8 @@ h=$ROOT/hooks
 # Every role gets the pointer hook, which follows /clear and /branch to the conversation now running.
 pointer=$(jq -n --arg p "$h/session-pointer.sh" --arg fm "$FM_HOME" --arg r "$role" \
   '{hooks: {SessionStart: [{hooks: [{type: "command", command: $p, args: [$fm, $r]}]}]}}')
-# The two gates block on failure: Claude Code lets a call through when a hook can't start or times out, unless the
-# hook sets onFailure: "block". The guard reads a 1 MB command in seconds, so 30 seconds only cuts off a runaway.
+# The guard, the outbound gate, one-send and the founder-mail gate block on failure: a hook that can't start or times
+# out lets the call through unless it sets onFailure: "block". The guard reads 1 MB in seconds; 30 s cuts off a runaway.
 # The subagent hooks get the tier names of agents/: subagent-tier.sh refuses a subagent that would run at the session's
 # model and effort, and delegation-log.sh logs each call to a tier. None of the hooks below blocks on failure.
 unlock=0
