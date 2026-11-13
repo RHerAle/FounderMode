@@ -161,7 +161,11 @@ The guard drops each redirection with its target, cuts the command at `;`, `&`, 
 - in `gh`: every subcommand of a command group or its aliases, except reads, `gh pr create`, clones and checkouts; a variable or a substitution in place of the group or the subcommand; `gh copilot`; and `gh api` with a write. The guard judges each `gh api` call on its own and lets through fields sent with `-X GET` and an inline GraphQL query without a mutation;
 - `git push` with `--force`, `--force-with-lease`, `--force-if-includes`, `--mirror`, `--delete`, `--prune`, `--all`, `--branches`, `--tags` or `--follow-tags`, or any abbreviation of these that git accepts (`--del`, `--mirr`); with a short option group holding `f` or `d`; with a `+`, `:` or `*` refspec, a `refs/tags/` refspec or `tag <name>`; and to a branch named `main` or `master`;
 - `git worktree remove --force`, and `git worktree remove` from anyone but the coordinator;
-- `docker compose down -v`, `docker compose rm -v` (also as `docker-compose`), `docker rm -v` or `docker container rm -v`, `docker volume rm`, `docker volume remove` or `docker volume prune`, and `docker system prune --volumes`, with `--volumes` in place of `-v` too.
+- `docker compose down -v`, `docker compose rm -v` (also as `docker-compose`), `docker rm -v` or `docker container rm -v`, `docker volume rm`, `docker volume remove` or `docker volume prune`, and `docker system prune --volumes`, with `--volumes` in place of `-v` too;
+- `claude -p` or `claude --print`, and `founder-mode <role>`, from any session but the coordinator: a session started from a session's shell runs outside the launcher. The launcher's own subcommands (`init`, `stalled`, `delegations`, `mail`, `db`) pass;
+- from any session, a shell write to `weekly-cap`: a redirection, or `tee`, `cp`, `mv`, `rm`, `touch`, `truncate`, `ln`, `install`, `dd` or `sed -i` on the file. Reading the cap passes.
+
+The guard also blocks a call it can't read, when `jq` is missing or the input isn't JSON.
 
 `FM_UNLOCK=1` at launch leaves the guard out of the session's settings, and the launcher prints a notice on stderr.
 
@@ -305,6 +309,8 @@ Two plugins run in every session without being called, so a count of calls misse
   ```bash
   claude() { case $PWD/ in "$HOME"/company/*|"$HOME"/outreach/*|"$HOME"/.founder-mode/board/*) echo "use founder-mode <role>" >&2; return 1 ;; esac; command claude "$@"; }
   ```
+
+  A session can start `claude` from its own shell too, and that child gets none of the launcher's settings: no guard, no weekly cap, no tool denials, and every connector of the account. The guard stops `claude -p` and `founder-mode <role>` from any session but the coordinator, and a shell write to `weekly-cap` from any session. Both checks catch an accident, not a session set on getting past it. The real boundary is a managed settings file (`/etc/claude-code/managed-settings.json` on Linux), which no session can override: its deny rules and hooks apply to every `claude` on the machine.
 
 - **Shell commands only.** The guard sees Bash and Monitor. A connector, or a built-in tool such as `RemoteTrigger`, acts without it: `settings/all.json` denies the mail connectors and `RemoteTrigger` to member roles. Deny there any other tool that writes outside, such as sharing a file or creating an event, or keep member roles out of bypass mode.
 - **Agent view.** The role sessions can't open agent view or move to the background. Open `claude agents` from another terminal.

@@ -453,6 +453,41 @@ expect 'allows: a GraphQL read written over several lines' guard $'gh api graphq
 expect "lets the coordinator remove a worktree" guard 'git worktree remove ../wt' coordinator
 expect "inert without its argument, even with FM_ROLE set" env FM_ROLE=dev "$ROOT/hooks/irreversible-guard.sh" <<<"$merge"
 expect "FM_UNLOCK=1 in its environment doesn't lift it" exit2 env FM_UNLOCK=1 "$ROOT/hooks/irreversible-guard.sh" member <<<"$merge"
+# A session started from a session's shell is outside the launcher; only the coordinator opens sessions.
+while IFS= read -r c; do
+  expect "blocks a member's child session: $c" blocked "$c"
+done < <(printf '%s\n' 'claude -p "list your tools"' 'claude --model x --print hi' "bash -c 'claude -p \"hi\"'" \
+  'cd x && ~/.local/bin/claude -p hi' 'founder-mode dev' 'bin/founder-mode dev --new' 'FM_UNLOCK=1 founder-mode dev' \
+  'bash -c "founder-mode dev"' 'founder-mode $ROLE' 'founder-mode $(echo dev)' '~/.local/bin/founder-mode dev' \
+  "tmux new-session -d 'founder-mode dev'" 'nohup founder-mode dev')
+expect "and an advisor's: claude -p hi" blocked 'claude -p hi' advisor
+expect "lets the coordinator run claude -p" guard 'claude -p hi' coordinator
+expect "and open a role" guard 'founder-mode dev' coordinator
+while IFS= read -r c; do
+  expect "allows: $c" guard "$c"
+done < <(printf '%s\n' 'claude --version' 'claude --help' 'mkdir -p claude' 'founder-mode stalled' 'founder-mode init' \
+  'founder-mode delegations' 'founder-mode mail note.md topic' 'founder-mode db list' \
+  'git -C ~/founder-mode log --oneline' 'git -C /srv/founder-mode status' 'ls ~/founder-mode hooks')
+# Only a founder changes the weekly cap, whatever the kind.
+while IFS= read -r c; do
+  for k in member coordinator; do expect "blocks ($k) a write to the cap: $c" blocked "$c" "$k"; done
+done < <(printf '%s\n' 'echo 100 > ~/.founder-mode/weekly-cap' 'echo 100>>"$FM_HOME/weekly-cap"' 'echo 1 >| weekly-cap' \
+  'echo 9 | tee -a "$FM_HOME"/weekly-cap' 'cp /tmp/x ~/.founder-mode/weekly-cap' 'mv cap.tmp "$FM_HOME/weekly-cap"' \
+  'rm -f ~/.founder-mode/weekly-cap' 'touch weekly-cap' 'truncate -s0 $FM_HOME/weekly-cap' \
+  'ln -sf /tmp/x $FM_HOME/weekly-cap' 'install -m644 x $FM_HOME/weekly-cap' 'dd of=$FM_HOME/weekly-cap' \
+  'sed -i s/80/99/ $FM_HOME/weekly-cap' "sed -Ei.bak 's/80/99/' \$FM_HOME/weekly-cap" 'sed s/80/99/ weekly-cap -i' \
+  'cd ~/.founder-mode && echo 99 > weekly"-"cap' 'echo 99 > "/tmp/my dir/weekly-cap"' \
+  "bash -c 'echo 99 > ~/.founder-mode/weekly-cap'")
+while IFS= read -r c; do
+  expect "allows: $c" guard "$c"
+done < <(printf '%s\n' 'cat "$FM_HOME/weekly-cap"' 'jq . ~/.founder-mode/weekly-cap' 'sed -n 1p $FM_HOME/weekly-cap' \
+  'cat $FM_HOME/weekly-cap > /tmp/cap.txt' 'sed -i s/x/y/ hooks/weekly-cap.sh')
+# Exit 0 isn't a failure, so onFailure: "block" can't catch a guard that lets through a call it can't read.
+expect "blocks input that isn't JSON" exit2 "$ROOT/hooks/irreversible-guard.sh" member <<<'not json'
+mkdir "$T/nojq" && ln -s "$(command -v cat)" "$T/nojq/"
+expect "blocks when jq is missing" exit2 env PATH="$T/nojq" "$BASH" "$ROOT/hooks/irreversible-guard.sh" member \
+  <<<'{"tool_input":{"command":"echo done"}}'
+expect "lets a call without a command through" "$ROOT/hooks/irreversible-guard.sh" member <<<'{"tool_name":"Monitor","tool_input":{}}'
 # A 300 KB heredoc with a substitution, quotes and a gh read on every line, then a merge. The guard used to take
 # minutes on this; a call that runs into the hook's timeout is blocked, so time is part of what it checks.
 { printf '%s\n' "cat > data.txt <<'EOF'"
