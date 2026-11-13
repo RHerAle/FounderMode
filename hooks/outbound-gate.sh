@@ -32,8 +32,9 @@ mode=$1 home=$2 kind=$3
 log=$home/state/outbound.tsv unlock=$home/state/outbound.unlock
 how="Only a founder lifts it, from their own terminal, with a line holding the address or @domain in $unlock (good for one call)."
 input=$(cat)
+# A dot after the domain is still that domain, so it is dropped before the rules and the log see the address.
 addrs=$(jq -r '[.tool_input | (.to, .cc, .bcc) | .. | strings | ascii_downcase
-  | scan("[^\\s<>,;:\"()\\[\\]]+@[^\\s<>,;:\"()\\[\\]]+")] | unique | .[]' <<<"$input" 2>/dev/null)
+  | scan("[^\\s<>,;:\"()\\[\\]]+@[^\\s<>,;:\"()\\[\\]]+") | sub("\\.+$"; "")] | unique | .[]' <<<"$input" 2>/dev/null)
 subject=$(jq -r '.tool_input.subject // "" | gsub("[\t\r\n]"; " ")' <<<"$input" 2>/dev/null)
 body=$(jq -r '.tool_input.body // ""' <<<"$input" 2>/dev/null)
 # A company is its registrable domain: the last two labels, or the last three when the second to last is co, com, org,
