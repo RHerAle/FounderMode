@@ -12,14 +12,15 @@
 # replaces it and restarts the wait. The launcher passes FM_HOME and the kit folder as the first two arguments.
 set -euo pipefail
 export LC_ALL=C.UTF-8
+no() { echo "founder-mode mail: $*" >&2; exit 1; }
 # shellcheck source=bin/mail-rules.sh
-. "$(dirname "$(readlink -f "$0")")/mail-rules.sh"
+. "$(dirname "$(readlink -f "$0")")/mail-rules.sh" 2>/dev/null && declare -F corrects similar >/dev/null \
+  || no "can't load bin/mail-rules.sh, so nothing was written"
 WAIT_MIN=60      # the gate's wait, in hooks/founder-mail-gate.sh; repeated here for the time it prints
 SIMILAR_DAYS=7   # how far back a sent subject still counts as the same topic
 usage="usage: founder-mode mail <file> <topic>   (topic: 3 to 40 lowercase letters, digits and dashes, such as pricing-draft)"
 home=$1 kit=$2; shift 2
 f=${1:?$usage} topic=${2:?$usage}
-no() { echo "founder-mode mail: $*" >&2; exit 1; }
 box=$home/state/founder-mail unlock=$home/state/founder-mail.unlock
 how="Only a founder unlocks it, from their own terminal: echo $topic >> $unlock (good for one send)."
 n=$(basename "$f")
