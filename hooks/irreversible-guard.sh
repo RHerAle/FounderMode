@@ -3,7 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Part of Founder Mode: https://github.com/RHerAle/FounderMode
 # PreToolUse hook for Bash and Monitor, which both run shell commands. Stops the git, gh and docker commands on its
-# list that publish under a founder's name or can't be undone, and tells the session to ask a founder first. It
+# list that publish under a founder's name or can't be undone, and tells the session to ask a founder first. It also
+# stops a shell write to the files only a founder writes, and a session other than the coordinator starting another
+# session from its shell. It
 # catches accidents: a session set on getting past it can hide a command from any pattern, so the hard stop for a
 # merge belongs on the server, in branch protection. It reads heredoc text too, so a session writes a file of example
 # commands with the Write or Edit tool, not with cat <<EOF.
@@ -11,12 +13,17 @@
 # hook does nothing. It takes no value from the environment, which can belong to another process. A founder lifts it
 # by launching with FM_UNLOCK=1, and then the launcher leaves the hook out of the settings.
 # Exit 2 blocks the call and shows stderr to Claude as the reason; exit 0 lets it through. The launcher sets
-# onFailure: "block", so a guard that can't start, fails or times out blocks the call too.
+# onFailure: "block", so a guard that can't start, fails or times out blocks the call too. Exit 0 is no failure, so
+# a guard that can't read the call (no jq on the PATH, or input that isn't JSON) exits 2 itself. A call without a
+# command passes: Monitor can carry none.
 set -uo pipefail
 kind=${1:-}
 [ -n "$kind" ] || exit 0
 input=$(cat)
-raw=$(jq -r '.tool_input.command // empty' <<<"$input" 2>/dev/null) || exit 0
+if [ -z "$input" ] || ! raw=$(jq -r '.tool_input.command // empty' <<<"$input" 2>/dev/null); then
+  echo "Blocked by the founder-mode guard: it can't read this call (jq is missing or the input isn't JSON), so it can't check it. Ask a founder to fix the guard." >&2
+  exit 2
+fi
 [ -n "$raw" ] || exit 0
 
 # Two readings of the command; the guard blocks what either one catches. In the first, quotes and backslashes go, as
@@ -67,6 +74,15 @@ hit() { match "$cmd" "$1"; }
 b='(^|[^[:alnum:]_.-])'
 # Options between a command and its subcommand, each with or without a value: git -C ../wt push, docker compose -p x down.
 o='([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*'
+
+# Only a founder changes the weekly cap, from their own terminal (hooks/weekly-cap.sh). Until the cap is reached, any
+# session's shell could raise it. Checked on both readings before split drops redirections, which is how a command
+# would write it. A target or an argument that ends in weekly-cap counts; reading the file passes.
+w='[^[:space:];&|()<>]*weekly-cap([[:space:];&|()<>]|$)' a='[^;&|()<>]*'
+if match "$one"$'\n'"$two" ">[>|&]?[[:space:]]*$w|${b}(tee|cp|mv|rm|touch|truncate|ln|install|dd)([[:space:]]$a)?[[:space:]=]$w|${b}sed[[:space:]]($a[[:space:]])?(-[[:alnum:]]*i|--in-place)$a[[:space:]]$w|${b}sed[[:space:]]$a[[:space:]]$w($a[[:space:]])?(-[[:alnum:]]*i|--in-place)"; then
+  echo "Blocked by the founder-mode guard: no session writes, moves or removes the weekly cap in \$FM_HOME/weekly-cap. Only a founder changes the cap, from their own terminal." >&2
+  exit 2
+fi
 
 # gh: reads, gh pr create and local clones pass, and any other subcommand of a gh command group waits for a founder,
 # so a write that gh adds later is blocked too. A group may carry gh's aliases (cs, ext, agent) or a plural
@@ -126,7 +142,7 @@ api_write() {
 }
 
 check() {
-  why=''
+  why='' end=" goes out under a founder's name or can't be undone. Ask a founder; with their OK, they relaunch this session with FM_UNLOCK=1."
   if gh_write; then :
   elif api_write; then
     why='gh api with a write'
@@ -151,6 +167,17 @@ check() {
     || hit "${b}docker${o}[[:space:]]+(container[[:space:]]+)?(rm|remove)([[:space:]].*)?[[:space:]](-[[:alnum:]]*v[[:alnum:]]*|--volumes)([[:space:]=]|$)" \
     || hit "${b}docker${o}[[:space:]]+(volume[[:space:]]+(rm|remove|prune)|system[[:space:]]+prune([[:space:]].*)?[[:space:]]--volumes)([[:space:]]|$)"; then
     why='docker removing volumes'
+  # A session started from a session's shell is outside the launcher: claude -p gets none of its settings, and
+  # founder-mode <role> opens a role with whatever the shell adds. Only the coordinator opens sessions. The launcher's
+  # own subcommands open none. The launcher counts as a bare word or as bin/founder-mode, anywhere in the line; after
+  # any other slash it is a folder of that name, as in git -C ~/founder-mode log.
+  elif [ "$kind" != coordinator ] && hit "${b}claude([[:space:]].*)?[[:space:]](-p|--print)([[:space:]=]|$)"; then
+    why='claude -p'
+    end=" starts a session with none of the launcher's settings (no guard, no weekly cap, no tool denials) and every connector of the account. Ask the coordinator or a founder."
+  elif [ "$kind" != coordinator ] && printf '%s' "$cmd" | grep -Eio -- "((^|[^[:alnum:]_./-])|bin/)founder-mode[[:space:]]+[^[:space:]]+" \
+    | awk '$NF !~ /^(init|stalled|delegations|mail|db)$/ { f = 1 } END { exit !f }'; then
+    why='founder-mode <role>'
+    end=" opens a role's session from this shell, where FM_UNLOCK=1 leaves the guard out and extra flags go straight to claude. Ask the coordinator or a founder."
   fi
   [ -n "$why" ]
 }
@@ -163,5 +190,5 @@ for r in "${readings[@]}"; do
   check && break
 done
 [ -n "$why" ] || exit 0
-echo "Blocked by the founder-mode guard: $why goes out under a founder's name or can't be undone. Ask a founder; with their OK, they relaunch this session with FM_UNLOCK=1." >&2
+echo "Blocked by the founder-mode guard: $why$end" >&2
 exit 2

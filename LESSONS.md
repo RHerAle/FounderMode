@@ -274,6 +274,13 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 - **Fix:** `settings/all.json` denies the mail connectors and `RemoteTrigger` to member roles. Anything else that writes outside goes in that deny list, or member roles stay out of bypass mode.
 - **Where:** `templates/settings/all.json`, README (Limits).
 
+### A session started from a session's shell has none of the launcher's settings
+
+- **What happened:** An audit found that a member could run `claude -p` or `founder-mode <role>` from its shell, and the guard let both through. A child started that way with a harmless prompt came up with the mail and calendar connectors that the launcher denies to its parent. The same audit found that any session could write a new cap to `weekly-cap` until the cap was reached, and that the guard let a call through when it couldn't read it.
+- **Cause:** The launcher passes the hooks and the tool denials in `--settings`, which a child doesn't inherit. With `--restricted` the child doesn't read the user's settings either. The guard had no check for either command or for the cap file, and it exited 0 when `jq` was missing or the input wasn't JSON, which `onFailure: "block"` doesn't count as a failure.
+- **Fix:** The guard blocks `claude -p`, `claude --print` and `founder-mode <role>` for every kind but the coordinator, and a shell write to `weekly-cap` for every kind. It exits 2 when it can't read the call. The real boundary for a child is a managed settings file, which no session can override.
+- **Where:** `hooks/irreversible-guard.sh`, `tests/smoke.sh`, README (Hooks, Limits).
+
 ### Hooks take their values from their command line
 
 - **What happened:** A reviewer started Claude Code's background service from one shell and moved a session from another shell to the background. That session's hooks ran with the first shell's role, kind and unlock variable, so one key press could leave a role without its guard, or hand it another role's.
