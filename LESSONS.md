@@ -411,6 +411,13 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 - **Fix:** A founder sets a weekly cap below the account's limit, in a file only a founder edits, and the sessions stop at it until the weekly reset. `hooks/weekly-cap.sh` refuses every tool and every new prompt once the week reaches the cap, and the coordinator still takes a founder's prompt and answers without tools. The hook needs a reading of the meter under two hours old in `state/usage.json`, and Founder Mode ships no program that writes one. Without that reading the hook does nothing and the rule binds in prose only.
 - **Where:** `templates/ORGCHART.md` (Pace), `hooks/weekly-cap.sh`, `tests/smoke.sh`.
 
+### A cap without a reading stops nobody
+
+- **What happened:** A review of the cap hook found that it exits without a word when the reading is missing, broken or older than two hours. The cap then stops nobody, and the founders still believe it holds. The reading comes from a program outside Founder Mode, so an expired login is enough.
+- **Cause:** The hook must not block work on a stale number, so it does nothing. Nothing told that case apart from a week under the cap.
+- **Fix:** With a cap set and no fresh reading, the coordinator's prompt gets a note that the cap is not applied and since when, at most once every 30 minutes. Tool calls and the other roles see nothing new.
+- **Where:** `hooks/weekly-cap.sh`, `tests/smoke.sh`.
+
 ### Two teams on one account
 
 - **What happened:** A second team of sessions started on the same account and drew on the same limit.

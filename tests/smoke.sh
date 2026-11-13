@@ -800,6 +800,32 @@ echo 'not json' > "$FM_HOME/state/usage.json"
 expect "a broken reading does nothing" test -z "$("$ROOT/hooks/weekly-cap.sh" "$FM_HOME" member <<<'{"hook_event_name":"PreToolUse"}')"
 cap PreToolUse member 85 >/dev/null
 expect "without its arguments it does nothing" test -z "$(FM_HOME=$FM_HOME "$ROOT/hooks/weekly-cap.sh" <<<'{"hook_event_name":"PreToolUse"}')"
+W=$FM_HOME/state/weekly-cap.warned
+capnote() { jq -cn --arg e "${1:-UserPromptSubmit}" '{hook_event_name: $e}' | "$ROOT/hooks/weekly-cap.sh" "$FM_HOME" "${2:-coordinator}"; }
+expect "a stale reading warns the coordinator's prompt" test "$(cap UserPromptSubmit coordinator 85 86400 7300)" = note
+expect "and leaves the mark in state/" test -e "$W"
+expect "it warns once, not on every prompt" test "$(cap UserPromptSubmit coordinator 85 86400 7300)" = none
+touch -d '31 minutes ago' "$W"
+expect "it warns again after 30 minutes" test "$(cap UserPromptSubmit coordinator 85 86400 7300)" = note
+rm "$W"
+o=$(capnote)
+expect "the note says the cap is not applied, and since when" grep -qF 'not being applied' <<<"$o"
+expect "and gives the time of the last reading" grep -qF 'last reading: 20' <<<"$o"
+rm "$W"
+expect "a week that has reset warns too" test "$(cap UserPromptSubmit coordinator 85 -60)" = note
+rm "$W"; echo 'not json' > "$FM_HOME/state/usage.json"
+expect "a broken reading warns" grep -qF 'no reading' <<<"$(capnote)"
+rm "$W" "$FM_HOME/state/usage.json"
+expect "so does a missing one" grep -qF 'not being applied' <<<"$(capnote)"
+rm "$W"
+expect "a member's prompt gets no note" test "$(cap UserPromptSubmit member 85 86400 7300)" = none
+expect "nor does a tool call" test "$(cap PreToolUse coordinator 85 86400 7300)" = none
+expect "a fresh reading under the cap gets no note" test "$(cap UserPromptSubmit coordinator 10)" = none
+expect "and none of these left the mark" test ! -e "$W"
+rm "$FM_HOME/weekly-cap"
+expect "without a cap there is nothing to warn about" test "$(cap UserPromptSubmit coordinator 85 86400 7300)" = none
+expect "and no mark" test ! -e "$W"
+echo 80 > "$FM_HOME/weekly-cap"
 rm "$FM_HOME/weekly-cap" "$FM_HOME/state/usage.json"
 
 echo "# the Design role's plugin and SKILLS.md"
