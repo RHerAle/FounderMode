@@ -698,6 +698,27 @@ echo @gmail.com > "$FM_HOME/state/outbound.unlock"
 expect "@ and a public provider unlocks no one there" exit2x dpass fm-smoke-pat@gmail.com 'More'
 expect "without its arguments it refuses" exit2x "$ROOT/hooks/outbound-gate.sh" <<<'{"tool_input":{"to":"a@b.example"}}'
 outfresh
+dlog ann@acme.example 'Pilot proposal'
+expect "a subdomain of a company mailed within 7 days is refused" exit2x dpass bob@sales.acme.example 'Other topic'
+refuse "and the refusal names the company's domain" "acme.example got mail" og pre <<<"$(draft bob@sales.acme.example 'Other topic')"
+echo @acme.example > "$FM_HOME/state/outbound.unlock"
+expect "@ and the company's domain unlocks a subdomain" dpass bob@sales.acme.example 'Other topic'
+dlog bob@sales.acme.example 'Other topic'
+expect "and the post hook uses that line up" test ! -s "$FM_HOME/state/outbound.unlock"
+outfresh
+row 2 old@sales.acme.example 'Hello'
+expect "a logged row with a subdomain counts for its company" exit2x dpass ann@acme.example 'Other topic'
+row 2 b@acme.co.uk 'Hello'
+expect "x.acme.co.uk is the company acme.co.uk" exit2x dpass a@x.acme.co.uk 'Other topic'
+outfresh
+row 2 b@other.co.uk 'Hello'
+expect "and acme.co.uk is not other.co.uk" dpass a@acme.co.uk 'Other topic'
+mkdir -p "$T/norules" && cp -r "$ROOT/hooks" "$ROOT/bin" "$T/norules/" && rm "$T/norules/bin/mail-rules.sh"
+refuse "without bin/mail-rules.sh the gate refuses" "can't load bin/mail-rules.sh" \
+  "$T/norules/hooks/outbound-gate.sh" pre "$FM_HOME" draft <<<"$(draft new@zeta.example 'Hello')"
+expect "with exit 2" exit2x "$T/norules/hooks/outbound-gate.sh" pre "$FM_HOME" draft <<<"$(draft new@zeta.example 'Hello')"
+refuse "and founder-mode mail stops" "can't load bin/mail-rules.sh" "$T/norules/bin/founder-mail.sh" "$FM_HOME" "$T/kit" a.md some-topic
+outfresh
 row 2 buyer@example 'Hello'
 printf '%s\n' 's' '' 'b' > "$FM_HOME/state/outreach.one-send.0b01.txt"
 expect "a founder's send grant doesn't lift the outbound rules" exit2 sendas 0b01 '{"tool_input":{"to":"buyer@example","subject":"s","body":"b"}}'

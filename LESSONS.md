@@ -676,6 +676,13 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 - **Fix:** Mail to the other founder carries a topic. `founder-mode mail` refuses a topic that already went out, a subject that corrects an earlier email and a subject close to a recent one under another topic. Its gate holds each text for an hour, and a second run on the same topic replaces the waiting text and restarts the hour. Mail outside the company, drafts and the one-send grant alike, reaches a person or a company once a week at most, with no corrections and no subject close to one that company got within a month. Only a line a founder writes under `$FM_HOME/state` lifts one of these limits, for one send. The guard blocks any command that names those files, and a deny rule keeps every role's file tools out of `state/`.
 - **Where:** `bin/founder-mail.sh`, `bin/mail-rules.sh`, `hooks/founder-mail-gate.sh`, `hooks/outbound-gate.sh`, `hooks/one-send.sh`, `hooks/irreversible-guard.sh`, `bin/founder-mode`, `tests/smoke.sh`.
 
+### A company is its registrable domain, and the gate refuses without its rules
+
+- **What happened:** The outbound gate counted a company by the exact domain after the `@`, so an address at a subdomain of a company that got mail that week passed as a new company, and so did a subject close to one that company got within the month. Separately, with `bin/mail-rules.sh` missing, the gate printed "command not found" for the two checks it loads from there and let the call through.
+- **Cause:** The company key was the text after the `@`. The gate sourced the rules file without checking the result and defined its refusal after it, so a failed check returned success and the hook exited with 0, which `onFailure: "block"` doesn't catch.
+- **Fix:** A company is its registrable domain: the last two labels, or the last three under a two-letter country code with `co`, `com`, `org`, `net`, `gov`, `gob`, `edu` or `ac` before it. Logged rows keep the exact domain and are matched on their registrable domain when read. An unlock line takes `@` and either domain. Public providers still count by address. This is not the Public Suffix List, and two domains of one company still count as two. The gate refuses with exit 2 when it can't load the rules, and `founder-mode mail` stops with an error.
+- **Where:** `hooks/outbound-gate.sh`, `bin/founder-mail.sh`, `README.md`, `tests/smoke.sh`.
+
 ### A program checks every deliverable
 
 - **What happened:** Before every delivery, sessions checked by hand for dashes, AI attribution and the names of companies under NDA, and the check depended on each session remembering it.
