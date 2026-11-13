@@ -644,6 +644,8 @@ expect "a public provider counts by address" dpass fm-smoke-pat@gmail.com 'Calen
 dlog fm-smoke-pat@gmail.com 'Calendar'
 expect "so another address there passes" dpass fm-smoke-joe@gmail.com 'Budget'
 expect "and the same one doesn't" exit2x dpass fm-smoke-pat@gmail.com 'Budget'
+expect "nor with a dot after the domain" exit2x dpass fm-smoke-pat@gmail.com. 'Budget'
+expect "and that dot doesn't make a new company" exit2x dpass eve@acme.example. 'Something else'
 row 8 x@gamma.example 'Pilot proposal for the client'
 expect "after 8 days, a subject close to one the company got within 30 is refused" exit2x dpass x@gamma.example 'Pilot proposal for client, second version'
 expect "and a different one passes" dpass y@gamma.example 'Demo test calendar'
