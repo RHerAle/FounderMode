@@ -705,10 +705,17 @@ expect "and the refusal leaves the grant unused" test ! -e "$FM_HOME/state/outre
 outfresh
 
 echo "# subagent tiers"
-tier() { jq -cn --arg t "$1" '{tool_input: {subagent_type: $t, description: "count the rows"}}' \
+tier() { jq -cn --arg t "$1" --argjson x "${2:-null}" '{tool_input: ({subagent_type: $t, description: "count the rows"} + ($x // {}))}' \
   | "$ROOT/hooks/subagent-tier.sh" intern junior senior | jq -rs '.[0].hookSpecificOutput.permissionDecision // "allow"'; }
 for t in '' general-purpose Explore Plan fork; do expect "refuses a subagent of type ${t:-none}" test "$(tier "$t")" = deny; done
 for t in intern junior senior my-own-agent; do expect "lets the $t through" test "$(tier "$t")" = allow; done
+for x in '{"model":"opus"}' '{"effort":"xhigh"}' '{"effort":"max"}'; do expect "refuses a tier call with $x" test "$(tier junior "$x")" = deny; done
+expect "and the same for the intern" test "$(tier intern '{"model":"opus"}')" = deny
+expect "and for a senior on a cheaper model" test "$(tier senior '{"model":"haiku"}')" = deny
+for p in intern:haiku junior:sonnet senior:opus; do expect "a call may repeat the model of the ${p%:*}" test "$(tier "${p%:*}" "{\"model\":\"${p#*:}\"}")" = allow; done
+for e in low medium high; do expect "lets a tier call at effort $e through" test "$(tier junior "{\"effort\":\"$e\"}")" = allow; done
+expect "a type that isn't a tier may set its model" test "$(tier my-own-agent '{"model":"opus","effort":"max"}')" = allow
+expect "the refusal says what to drop" grep -qF 'Drop the model or lower the effort' <<<"$(jq -cn '{tool_input: {subagent_type: "junior", model: "opus"}}' | "$ROOT/hooks/subagent-tier.sh" intern junior senior)"
 expect "the tier hook names the tiers" grep -qF 'intern junior senior' <<<"$(jq -cn '{tool_input: {}}' | "$ROOT/hooks/subagent-tier.sh" intern junior senior)"
 expect "without its arguments it does nothing" test -z "$("$ROOT/hooks/subagent-tier.sh" <<<'{"tool_input":{}}')"
 

@@ -467,6 +467,13 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 - **Fix:** Start with the lowest tier that can do the job and go up one when it gets stuck. Anything longer than a screen goes to the intern or the junior. Limits of the measure: the two weeks held different work, the figures are API prices and not the share of the plan's limit, and the intern was barely used (about one Haiku request for every ten on Sonnet). A look back over 56 delegations found no invented result, and 5 results used without a visible check. Zero found is not zero, so a hook now logs every call to a tier, and the session marks each one once it has checked it.
 - **Where:** `agents/`, `hooks/subagent-tier.sh`, `hooks/delegation-log.sh`, `bin/delegations.sh`, `templates/ORGCHART.md` (Pace).
 
+### A call can override its tier
+
+- **What happened:** A count of the transcripts found 287 calls to a tier. Four named the senior and set `model` to the most expensive model, and those subagents ran on it. Another 43 repeated their tier's own model, which changes nothing.
+- **Cause:** The call's `model` and `effort` beat the tier's, and the hook looked at the type alone.
+- **Fix:** The hook refuses a call to a tier that sets a model other than the tier's, or an effort of `xhigh` or `max`. A call may still lower the effort or repeat the tier's model.
+- **Where:** `hooks/subagent-tier.sh`.
+
 ### A new model or effort costs a resumed conversation
 
 - **What happened:** The board recommended lowering the effort of several roles and checked what the change would cost a conversation already under way.
