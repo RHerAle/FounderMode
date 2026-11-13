@@ -1,0 +1,224 @@
+#!/usr/bin/env -S python3 -I
+# Copyright 2026 RHerAle
+# SPDX-License-Identifier: Apache-2.0
+# Part of Founder Mode: https://github.com/RHerAle/FounderMode
+"""founder-mode find-conversation: searches the role's previous conversation without loading its transcript. PILOT,
+for the relay (templates/relay.md). Python 3, standard library only.
+
+Usage:
+  founder-mode find-conversation "<text or regex>" [--max N] [--limit N] [--all] [--role R]
+  founder-mode find-conversation --list [--role R]
+  bin/find-conversation --selftest
+The role is FM_ROLE; only the coordinator passes another one with --role. Its session name comes from roles.tsv, and
+a transcript belongs to it when its first agentName is that name. By default it reads the most recent conversation
+other than the one in state/<role>.session; --all reads every one, newest first. It prints fragments of N characters
+(default 300) around each match, from text, tool calls and tool results, never thinking, and stops at --limit matches
+(default 10) or CAP characters. An advisor's or the isolated role's conversations are never searched: what they read
+must not reach another session.
+Exit codes: 0 fine; 1 no previous conversation; 2 refused.
+"""
+import argparse, json, os, re, subprocess, sys, tempfile
+from pathlib import Path
+
+CAP = 4000  # characters per call: a search brings back what the relay left out, not the old context
+CLOSED = ("advisor", "isolated")
+
+def die(m):
+    print("find-conversation: " + m, file=sys.stderr)
+    sys.exit(2)
+
+def roles(home):
+    """{role: (session name, kind)} from roles.tsv."""
+    out = {}
+    try:
+        for line in (home / "roles.tsv").read_text("utf-8").splitlines():
+            c = line.split("\t")
+            if not line.startswith("#") and len(c) >= 6: out[c[0]] = (c[1], c[5])
+    except OSError:
+        die(f"no {home}/roles.tsv")
+    return out
+
+def pick(asked, me, table):
+    """The role to search, or die."""
+    if not me or me not in table: die("FM_ROLE must name a role of roles.tsv")
+    role = asked or me
+    if role not in table: die(f"{role} is not in roles.tsv")
+    if role != me and table[me][1] != "coordinator": die("only the coordinator searches another role")
+    if table[role][1] in CLOSED or table[me][1] in CLOSED: die(f"refused for an {table[role][1] if table[role][1] in CLOSED else table[me][1]} role")
+    return role
+
+def transcripts(name, claude):
+    """The transcripts whose first agentName is NAME, newest first. Subagent transcripts sit deeper and don't count."""
+    rx, found = re.compile(rb'"agentName":"([^"]*)"'), []
+    for f in (claude / "projects").glob("*/*.jsonl"):
+        try:
+            with open(f, "rb") as fh:
+                for l in fh:
+                    m = rx.search(l)
+                    if m:
+                        if m.group(1).decode("utf-8", "replace") == name: found.append((f.stat().st_mtime, f))
+                        break
+        except OSError:
+            pass
+    return [f for _, f in sorted(found, reverse=True)]
+
+def current(home, role):
+    try:
+        return (home / "state" / f"{role}.session").read_text().strip()
+    except OSError:
+        return ""
+
+def texts(d):
+    """(kind, text) of one entry: text, tool_use and tool_result only."""
+    m = d.get("message")
+    if d.get("type") not in ("user", "assistant") or not isinstance(m, dict): return
+    c = m.get("content")
+    if isinstance(c, str):
+        yield d["type"], c
+        return
+    for b in c if isinstance(c, list) else []:
+        if not isinstance(b, dict): continue
+        k = b.get("type")
+        if k == "text": yield d["type"], str(b.get("text", ""))
+        elif k == "tool_use": yield "tool_use", str(b.get("name", "")) + " " + json.dumps(b.get("input"), ensure_ascii=False)
+        elif k == "tool_result":
+            r = b.get("content")
+            if isinstance(r, list): r = " ".join(str(x.get("text", "")) for x in r if isinstance(x, dict) and x.get("type") == "text")
+            if isinstance(r, str): yield "tool_result", r
+
+def around(text, rx, n):
+    text = re.sub(r"\s+", " ", text)
+    m = rx.search(text)
+    if not m: return None
+    a = max(0, min((m.start() + m.end()) // 2 - n // 2, len(text) - n))
+    return text[a:a + n]
+
+def listing(files, cur):
+    ts = re.compile(r'"timestamp":"([^"]*)"')
+    for f in files:
+        n, first, last = 0, "", ""
+        with open(f, errors="replace") as fh:
+            for l in fh:
+                n += 1
+                m = ts.search(l)
+                if m: first, last = first or m.group(1), m.group(1)
+        print(f"{f.stem[:8]} {first or '-'} {last or '-'} {f.stat().st_size}B {n}l" + (" (current)" if f.stem == cur else ""))
+
+def search(a, files, cur):
+    try:
+        rx = re.compile(a.text, re.I)
+    except re.error:
+        rx = re.compile(re.escape(a.text), re.I)
+    width = max(10, min(a.max, 3000))
+    files = [f for f in files if f.stem != cur]
+    if not files:
+        print("no previous conversation of the role")
+        return 1
+    out, used, n, cut = [], 0, 0, ""
+    for f in files if a.all else files[:1]:
+        with open(f, errors="replace") as fh:
+            for i, l in enumerate(fh, 1):
+                if cut: break
+                if rx.search(l) is None: continue
+                try:
+                    d = json.loads(l)
+                except ValueError:
+                    continue
+                for kind, t in texts(d):
+                    frag = around(t, rx, width)
+                    if frag is None: continue
+                    if n >= a.limit:
+                        cut = "the limit"
+                        break
+                    line = f"{f.stem[:8]}:{i} {d.get('timestamp', '-')} {kind} | {frag}"
+                    if used + len(line) + 1 > CAP - 100:
+                        cut = "the character cap"
+                        break
+                    out.append(line); used += len(line) + 1; n += 1
+        if cut: break
+    print("\n".join(out))
+    print(f"[matches shown: {n}" + (f"; cut at {cut}, there are more" if cut else "") + "]")
+    return 0
+
+def main(argv):
+    ap = argparse.ArgumentParser(prog="founder-mode find-conversation")
+    ap.add_argument("text", nargs="?")
+    ap.add_argument("--max", type=int, default=300)
+    ap.add_argument("--limit", type=int, default=10)
+    ap.add_argument("--all", action="store_true")
+    ap.add_argument("--role")
+    ap.add_argument("--list", action="store_true")
+    a = ap.parse_args(argv)
+    home = Path(os.environ.get("FM_HOME") or Path.home() / ".founder-mode")
+    claude = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    table = roles(home)
+    role = pick(a.role, os.environ.get("FM_ROLE", ""), table)
+    files, cur = transcripts(table[role][0], claude), current(home, role)
+    if a.list:
+        listing(files, cur)
+        return 0
+    if not a.text: die("give the text to search")
+    return search(a, files, cur)
+
+def selftest():
+    assert __debug__, "the self-test needs its asserts: don't run it with -O"
+    me = os.path.realpath(__file__)
+    with tempfile.TemporaryDirectory() as h:
+        fm, pr = Path(h, "fm"), Path(h, "claude", "projects", "-x")
+        pr.mkdir(parents=True); (fm / "state").mkdir(parents=True)
+        (fm / "roles.tsv").write_text((Path(me).parent.parent / "templates/roles.tsv").read_text("utf-8"), "utf-8")
+
+        def mk(id_, name, body, t):
+            rows = [{"type": "agent-name", "agentName": name},
+                    {"type": "user", "timestamp": "2030-01-0%dT10:00:00Z" % t, "message": {"role": "user", "content": body}},
+                    {"type": "assistant", "timestamp": "2030-01-0%dT10:00:01Z" % t, "message": {"content": [
+                        {"type": "thinking", "thinking": "PRIVATE"}, {"type": "tool_use", "name": "Bash", "input": {"command": "echo NEEDLE"}}]}},
+                    {"type": "user", "timestamp": "2030-01-0%dT10:00:02Z" % t, "message": {"content": [
+                        {"type": "tool_result", "content": "result NEEDLE ok"}]}}]
+            if id_.startswith("eeeeeeee"): rows += [{"type": "user", "message": {"content": body}}] * 4
+            p = pr / (id_ + ".jsonl")
+            p.write_text("\n".join(json.dumps(x, separators=(",", ":")) for x in rows) + "\n")
+            os.utime(p, (t * 1000 + 1e9, t * 1000 + 1e9))
+
+        mk("aaaaaaaa-old", "Design", "old NEEDLE", 1)
+        mk("bbbbbbbb-prev", "Design", "previous NEEDLE", 2)
+        mk("cccccccc-cur", "Design", "current NEEDLE", 3)
+        mk("dddddddd-other", "Legal", "legal NEEDLE", 4)
+        mk("eeeeeeee-big", "Finance", "x" * 1000 + "NEEDLE" + "y" * 1000, 5)
+        mk("ffffffff-out", "Outreach", "mail NEEDLE", 6)
+        (pr / "sub").mkdir()
+        (pr / "sub" / "gggggggg.jsonl").write_text(json.dumps({"type": "agent-name", "agentName": "Design"}) + "\n")
+        (fm / "state" / "design.session").write_text("cccccccc-cur\n")
+
+        def run(*args, role="design"):
+            env = {"HOME": h, "PATH": os.environ.get("PATH", ""), "FM_HOME": str(fm), "CLAUDE_CONFIG_DIR": str(Path(h, "claude"))}
+            if role is not None: env["FM_ROLE"] = role
+            r = subprocess.run([me, *args], env=env, capture_output=True, text=True)
+            return r.returncode, r.stdout
+
+        c, o = run("NEEDLE", "--all")
+        assert c == 0 and "bbbbbbbb" in o and "aaaaaaaa" in o and "cccccccc" not in o and "dddddddd" not in o, o
+        c, o = run("needle")
+        assert "bbbbbbbb" in o and "aaaaaaaa" not in o and "PRIVATE" not in o, o  # only the previous one, any case, no thinking
+        assert o.count("bbbbbbbb") == 3 and "tool_use" in o and "tool_result" in o, o
+        assert run("NEEDLE", role="legal")[0] == 0  # no session file: the most recent one
+        assert run("NEEDLE", "--role", "legal")[0] == 2  # only the coordinator searches another role
+        assert run("NEEDLE", "--role", "legal", role="coordinator")[1].count("dddddddd") == 3
+        for r in ("outreach", "advisor1", "nobody", None):
+            assert run("NEEDLE", role=r) == (2, ""), r
+        assert run("NEEDLE", "--role", "outreach", role="coordinator")[0] == 2
+        c, o = run("NEEDLE", "--max", "40", role="finance")
+        frag = o.split(" | ", 1)[1].splitlines()[0]
+        assert len(frag) == 40 and frag.count("x") in range(17, 24) and frag.count("y") in range(11, 18), frag
+        c, o = run("NEEDLE", "--max", "3000", "--limit", "50", role="finance")
+        assert len(o) <= CAP and "cut at the character cap" in o, len(o)
+        assert "cut at the limit" in run("NEEDLE", "--limit", "1", "--all")[1]
+        c, o = run("--list")
+        assert c == 0 and all(x in o for x in ("aaaaaaaa", "bbbbbbbb", "cccccccc", "(current)", "2030-01-02T10:00:02Z", " 4l")), o
+        assert "dddddddd" not in o and "gggggggg" not in o, o
+        assert run("NEEDLE", role="engineering") == (1, "no previous conversation of the role\n")
+    print("selftest (pilot): fine")
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(selftest() if sys.argv[1:] == ["--selftest"] else main(sys.argv[1:]))

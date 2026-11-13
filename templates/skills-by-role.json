@@ -1,0 +1,15 @@
+{
+  "_note": "Read by bin/founder-mode at each launch. Each group gets on, name-only or off in the role's skillOverrides; a role without a row, or a group its row leaves out, takes the default row. Skill descriptions in the listing are cut to maxDescChars. Group names are yours; the skills listed are the ones SKILLS.md names.",
+  "maxDescChars": 250,
+  "groups": {
+    "design": ["frontend-design", "web-design-guidelines", "mobile-android-design", "mobile-ios-design", "ui-ux-pro-max", "brand-discovery"],
+    "research": ["paper-lookup", "peer-review"],
+    "timers": ["loop", "schedule"],
+    "unused": ["keybindings-help", "fewer-permission-prompts", "init"]
+  },
+  "roles": {
+    "default": {"design": "off", "research": "name-only", "timers": "off", "unused": "off"},
+    "coordinator": {"timers": "on"},
+    "design": {"design": "on", "research": "off"}
+  }
+}

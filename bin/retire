@@ -1,0 +1,193 @@
+#!/usr/bin/env -S python3 -I
+# Copyright 2026 RHerAle
+# SPDX-License-Identifier: Apache-2.0
+# Part of Founder Mode: https://github.com/RHerAle/FounderMode
+"""founder-mode retire: retires a phrase, lists where it is still written and opens a pending item for each owner.
+PILOT. Python 3, standard library only. facts/README.md says when to use it.
+
+Usage:
+  founder-mode retire "<old phrase>" "<new phrase>" --by <role> --source <path:line|order|URL> [--dry]
+  bin/retire --selftest
+Adds the row to $FM_HOME/facts/retired.tsv and looks for the old phrase, in any letter case, in $FM_HOME/memory/**/*.md,
+$FM_HOME/work/<role>/**/*.md, $FM_HOME/roles/*.md, $FM_HOME/ORGCHART.md and the CLAUDE.md of every folder in
+roles.tsv. It skips links, hidden folders and the folders in SKIP. It writes the path:line list to
+$FM_HOME/work/<coordinator>/retired/<YYYY-MM-DD>-<slug>.txt and opens one pending item per owner with founder-mode db.
+The owner is <role> under memory/<role>/ and work/<role>/, and the coordinator for the rest. An owner that doesn't
+write in founder-mode db (an advisor, the isolated role) hands its item to the coordinator.
+--dry does everything but write and open items. It prints paths, line numbers and counts, never a file's text.
+Exit codes: 0 fine; 2 refused, nothing written; 1 the row and the list are written, but an item didn't open.
+"""
+import argparse, fcntl, importlib.machinery, importlib.util, os, re, subprocess, sys, tempfile, unicodedata
+from collections import defaultdict
+from datetime import date
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.dont_write_bytecode = True  # loading bin/db leaves no .pyc in bin/
+_loader = importlib.machinery.SourceFileLoader("db", str(HERE / "db"))
+db = importlib.util.module_from_spec(importlib.util.spec_from_loader("db", _loader))
+_loader.exec_module(db)
+
+SKIP = {"archive", "board", "venv", ".venv", "node_modules", "vendor", "site-packages"}
+MAX_ITEM = 300  # under db's MAX_TEXT, with room for the list's path
+
+class Refused(Exception): pass
+
+def folders(home):
+    """The working folder of every row of roles.tsv, with ~ and $FM_HOME expanded."""
+    out = []
+    for line in (db.HOME / "roles.tsv").read_text("utf-8").splitlines():
+        c = line.split("\t")
+        if line.startswith("#") or len(c) < 6: continue
+        d = re.sub(r"^~(?=/|$)", str(home), c[4]).replace("$FM_HOME", str(db.HOME))
+        if d not in out: out.append(d)
+    return out
+
+def files(home, coordinator):
+    """(owner, path) of each file searched. Links are never followed."""
+    def walk(base, by_role):
+        for d, subs, names in os.walk(base):
+            subs[:] = sorted(s for s in subs if not s.startswith(".") and s not in SKIP)
+            for n in sorted(names):
+                p = Path(d, n)
+                if n.endswith(".md") and not p.is_symlink():
+                    parts = p.relative_to(base).parts
+                    if by_role and len(parts) < 2: continue  # a file loose in work/ or memory/ has no owner
+                    yield (parts[0] if by_role else coordinator), p
+    H = db.HOME
+    yield from walk(H / "memory", True)
+    yield from walk(H / "work", True)
+    for p in [*sorted((H / "roles").glob("*.md")), H / "ORGCHART.md", *(Path(d, "CLAUDE.md") for d in folders(home))]:
+        if p.is_file() and not p.is_symlink(): yield coordinator, p
+
+def find(old, home, coordinator):
+    """{owner: [path:line, ...]} of each line that holds the old phrase, in any letter case."""
+    o, places = old.casefold(), defaultdict(list)
+    for owner, p in files(home, coordinator):
+        try:
+            text = p.read_text("utf-8", errors="replace")
+        except OSError:
+            continue
+        places[owner] += [f"{p}:{n}" for n, l in enumerate(text.split("\n"), 1) if o in l.casefold()]
+    return {k: v for k, v in sorted(places.items()) if v}
+
+def slug(t):
+    t = unicodedata.normalize("NFKD", t).encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]+", "-", t).strip("-")[:40].strip("-") or "phrase"
+
+def main(argv, role, today, home):
+    ap = argparse.ArgumentParser(prog="founder-mode retire", add_help=False, allow_abbrev=False)
+    ap.add_argument("old"); ap.add_argument("new")
+    ap.add_argument("--by", required=True); ap.add_argument("--source", required=True)
+    ap.add_argument("--dry", action="store_true")
+    try:
+        a = ap.parse_intermixed_args(argv)
+    except SystemExit:
+        print(__doc__, file=sys.stderr)
+        return 2
+    writers, owners, coordinator = db.people()
+    retired = db.HOME / "facts/retired.tsv"
+    try:
+        row = [a.old.strip(), a.new.strip(), f"{today:%Y-%m-%d}", a.by, a.source.strip()]
+        if any(db.CONTROL.search(c) for c in row): raise Refused("a field holds a tab, a line break or a control character")
+        if len(row[0]) < 3 or not row[1] or not row[4]: raise Refused("the old phrase (3 characters or more), the new one or the source is missing")
+        if a.by not in owners: raise Refused("--by is neither a writing role nor a founder")
+        if not coordinator: raise Refused("roles.tsv has no coordinator to own the shared files")
+        if not a.dry and role not in writers: raise Refused(db.BAD_ROLE)
+        if row[0].casefold() in [c[0].casefold() for _, c in db.dated(retired, lambda m: None, False)]:
+            raise Refused("that phrase is already in retired.tsv")
+    except Refused as e:
+        print(f"refused: {e}", file=sys.stderr)
+        return 2
+    places = find(row[0], home, coordinator)
+    items = defaultdict(int)
+    for k, v in places.items(): items[k if k in writers else coordinator] += len(v)
+    out = db.HOME / f"work/{coordinator}/retired/{row[2]}-{slug(row[0])}.txt"
+    for i in range(2, 100):
+        if not out.exists(): break
+        out = out.with_name(f"{row[2]}-{slug(row[0])}-{i}.txt")  # nothing is overwritten
+    name = str(out.relative_to(db.HOME))
+    total = sum(map(len, places.values()))
+    print(f"{'dry: ' if a.dry else ''}{total} places in {sum(len({s.rsplit(':', 1)[0] for s in v}) for v in places.values())} files")
+    for k, v in places.items(): print(f"  {k}\t{len(v)}")
+    if a.dry:
+        print(f"dry: {retired.relative_to(db.HOME)} and {name} not written; items that would open: "
+              + (", ".join(f"{k} ({n})" for k, n in sorted(items.items())) or "none"))
+        return 0
+    retired.parent.mkdir(parents=True, exist_ok=True)
+    with open(retired, "a+", encoding="utf-8") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        f.seek(0)
+        before = f.read()
+        f.write(("" if not before or before.endswith("\n") else "\n") + "\t".join(row) + "\n")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with open(out, "x", encoding="utf-8") as f:
+        f.write(f"# Retired phrase: \"{row[0]}\". New: \"{row[1]}\". Since {row[2]}, by {row[3]}, source {row[4]}.\n")
+        for k, v in places.items(): f.write(f"# {k}: {len(v)}\n" + "".join(x + "\n" for x in v))
+    print(f"written: a row in {retired.relative_to(db.HOME)} and the list in {name}")
+    failed = 0
+    for k, n in sorted(items.items()):
+        tail = f"\": {n} places of yours; list in {name}"
+        room = MAX_ITEM - len("Retired phrase \"") - len(tail)
+        text = "Retired phrase \"" + (row[0] if len(row[0]) <= room else row[0][:room - 1] + "…") + tail
+        r = subprocess.run([str(HERE / "db"), "open", "--owner", k, "--source", name, "--", text],
+                           env={**os.environ, "FM_ROLE": role, "FM_HOME": str(db.HOME)}, capture_output=True, text=True, timeout=30)
+        print(f"item for {k}: {r.stdout.strip() or r.stderr.strip()} (exit {r.returncode})")
+        failed += r.returncode != 0
+    return 1 if failed else 0
+
+def selftest():
+    assert __debug__, "the self-test needs its asserts: don't run it with -O"
+    import contextlib, io
+    with tempfile.TemporaryDirectory() as tmp:
+        db.HOME, home = H, U = Path(tmp, "fm"), Path(tmp, "user")
+        put = lambda rel, txt="Our FIRST SENSOR only, here\n", base=H: (base / rel).parent.mkdir(parents=True, exist_ok=True) or (base / rel).write_text(txt, "utf-8")
+        put("roles.tsv", (HERE.parent / "templates/roles.tsv").read_text("utf-8"))
+        for rel in ("memory/legal/a.md", "memory/advisor1/b.md", "roles/coordinator.md", "ORGCHART.md", "work/dev/x/y.md", "work/dev/z.md"):
+            put(rel)
+        put("memory/legal/two.md", "nothing\nagain our first sensor only\nand our First Sensor only once more\n")
+        for rel in ("work/dev/venv/z.md", "work/legal/archive/q.md", "work/loose.md", "memory/legal/c.jsonl", "board/x.md",
+                    "work/finance/.hidden/o.md", "work/finance/n.txt"):
+            put(rel)  # none of these counts
+        (H / "work/dev/link.md").symlink_to(H / "work/dev/z.md")
+        put("company/product/CLAUDE.md", base=U); put("company/admin/CLAUDE.md", "something else\n", U)
+        expected = {"advisor1": 1, "coordinator": 3, "dev": 2, "legal": 3}
+        assert {k: len(v) for k, v in find("our first sensor only", U, "coordinator").items()} == expected
+        assert find("our first sensor only", U, "coordinator")["legal"][1:] == [f"{H}/memory/legal/two.md:2", f"{H}/memory/legal/two.md:3"]
+        assert slug("Our first sensor only") == "our-first-sensor-only" and slug("«Ñ»") == "n"
+
+        def run(argv, role="coordinator"):
+            with contextlib.redirect_stdout(io.StringIO()) as o, contextlib.redirect_stderr(io.StringIO()):
+                return main(argv, role, date(2030, 1, 12), U), o.getvalue()
+        order = ["our first sensor only", "several sensors", "--by", "coordinator", "--source", "test"]
+        code, out = run(order + ["--dry"], role="")
+        assert code == 0 and "dry: 9 places in 8 files" in out and "advisor1 (1)" not in out and "coordinator (4)" in out, out
+        assert not (H / "facts").exists() and not (H / "work/coordinator").exists()  # --dry writes nothing
+        assert "FIRST SENSOR" not in out and "here" not in out  # never a file's text
+        for bad in (order[:4] + ["--source", " "], ["ab", "x", "--by", "legal", "--source", "f"], order[:3] + ["nobody"] + order[4:],
+                    ["a\tb c", "x", "--by", "legal", "--source", "f"], order[:2]):
+            assert run(bad)[0] == 2, bad
+        assert run(order, role="")[0] == 2 and run(order, role="advisor1")[0] == 2 and not (H / "facts").exists()
+        code, out = run(order)
+        assert code == 0, out
+        assert (H / "facts/retired.tsv").read_text("utf-8") == "our first sensor only\tseveral sensors\t2030-01-12\tcoordinator\ttest\n"
+        listed = (H / "work/coordinator/retired/2030-01-12-our-first-sensor-only.txt").read_text("utf-8").split("\n")
+        assert sum(1 for l in listed if l and not l.startswith("#")) == 9 and "# advisor1: 1" in listed, listed
+        con = db.mount(lambda m: None)
+        got = db.query(con, "SELECT owner, text, source FROM pending ORDER BY owner")[1]
+        assert [(k, s) for k, _, s in got] == [(k, "work/coordinator/retired/2030-01-12-our-first-sensor-only.txt")
+                                              for k in ("coordinator", "dev", "legal")], got
+        assert got[0][1] == "Retired phrase \"our first sensor only\": 4 places of yours; list in work/coordinator/retired/2030-01-12-our-first-sensor-only.txt"
+        assert run(order)[0] == 2  # already retired
+        long = "only " + "x" * 400
+        put("memory/legal/long.md", long + "\n")
+        code, out = run([long, "y", "--by", "legal", "--source", "f"])
+        assert code == 0 and "(exit 0)" in out, out
+        lens = db.query(db.mount(lambda m: None), "SELECT length(text) FROM pending WHERE owner = 'legal'")[1]
+        assert max(n for (n,) in lens) == MAX_ITEM, lens
+    print("selftest (pilot): fine")
+    return 0
+
+if __name__ == "__main__":
+    if sys.argv[1:] == ["--selftest"]: sys.exit(selftest())
+    sys.exit(main(sys.argv[1:], os.environ.get("FM_ROLE", ""), date.today(), Path.home()))

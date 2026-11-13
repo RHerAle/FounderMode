@@ -1,0 +1,132 @@
+#!/usr/bin/env -S python3 -I
+# Copyright 2026 RHerAle
+# SPDX-License-Identifier: Apache-2.0
+# Part of Founder Mode: https://github.com/RHerAle/FounderMode
+"""founder-mode summary: rewrites the org chart's "What the company is today" block from the summary=yes rows of
+$FM_HOME/facts/*.tsv (facts/README.md). PILOT. Python 3, standard library only.
+
+Usage:
+  founder-mode summary          write the block between <!-- today:start --> and <!-- today:end -->, after a copy of
+                                ORGCHART.md to $FM_HOME/archive/orgchart/ORGCHART.<date-time>.md
+  founder-mode summary --dry    show the diff and write nothing
+  bin/facts-summary --selftest
+Without the markers, the block goes right after the "Sessions" table. The rows are read with the rule of bin/db (view
+facts). Every session loads the org chart on every request, so the block holds 10 facts at most.
+Exit codes: 0 fine, or nothing to change; 2 refused (over 10 facts, broken markers, no "Sessions" table); 3 a bad line
+in facts/, and nothing written.
+"""
+import difflib, importlib.machinery, importlib.util, os, sys, tempfile
+from datetime import datetime
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.dont_write_bytecode = True  # loading bin/db leaves no .pyc in bin/
+_loader = importlib.machinery.SourceFileLoader("db", str(HERE / "db"))
+db = importlib.util.module_from_spec(importlib.util.spec_from_loader("db", _loader))
+_loader.exec_module(db)
+
+START, END, TITLE = "<!-- today:start -->", "<!-- today:end -->", "## What the company is today"
+MAX_FACTS = 10  # the org chart travels with every request of every session
+
+class Refused(Exception): pass
+
+def block(rows):
+    """The block's lines, markers included. Raises Refused past MAX_FACTS."""
+    if len(rows) > MAX_FACTS: raise Refused(f"{len(rows)} facts with summary=yes; the cap is {MAX_FACTS}")
+    body = [f"- {fact} ({topic}, since {since})" for topic, _, _, fact, since, _, _ in rows] or ["- (no fact with summary=yes)"]
+    return [START, TITLE, "", "Written by `founder-mode summary` from the summary=yes rows of `facts/*.tsv`; don't edit it by hand.",
+            "", *body, END]
+
+def place(lines, new):
+    """The org chart with the new block: where the old one was, or after the "Sessions" table."""
+    s, e = [n for n, l in enumerate(lines) if l.strip() == START], [n for n, l in enumerate(lines) if l.strip() == END]
+    if s or e:
+        if len(s) != 1 or len(e) != 1 or s[0] > e[0]: raise Refused("the today:start and today:end markers are broken or repeated")
+        return lines[:s[0]] + new + lines[e[0] + 1:]
+    try:
+        n = lines.index("## Sessions") + 1
+        while not lines[n].startswith("|"): n += 1
+        while n < len(lines) and lines[n].startswith("|"): n += 1
+    except (ValueError, IndexError):
+        raise Refused('the org chart has no "Sessions" table') from None
+    return lines[:n] + [""] + new + lines[n:]
+
+def main(argv, now):
+    home = db.HOME
+    if argv not in ([], ["--dry"]):
+        print(__doc__, file=sys.stderr)
+        return 2
+    bad = []
+    def warn(m): bad.append(m); print(f"warning: {m}", file=sys.stderr)
+    rows = sorted(r for r in db.facts(warn) if r[6] == "yes")
+    if bad:
+        print("refused: bad lines in facts/; nothing written", file=sys.stderr)
+        return 3
+    chart = home / "ORGCHART.md"
+    old = chart.read_text("utf-8")
+    try:
+        new = "\n".join(place(old.split("\n"), block(rows)))
+    except Refused as e:
+        print(f"refused: {e}", file=sys.stderr)
+        return 2
+    if new == old:
+        print("nothing to change")
+        return 0
+    if argv == ["--dry"]:
+        sys.stdout.writelines(difflib.unified_diff(old.splitlines(True), new.splitlines(True), "ORGCHART.md", "ORGCHART.md (new)"))
+        return 0
+    copy = home / f"archive/orgchart/ORGCHART.{now:%Y-%m-%d-%H%M%S}.md"
+    copy.parent.mkdir(parents=True, exist_ok=True)
+    with open(copy, "x", encoding="utf-8") as c: c.write(old)  # "x": an earlier copy is never overwritten
+    tmp = chart.with_name(f".ORGCHART.{os.getpid()}.tmp")
+    tmp.write_text(new, "utf-8")
+    os.chmod(tmp, chart.stat().st_mode & 0o7777)
+    os.replace(tmp, chart)
+    print(f"written: {len(rows)} facts; copy in {copy.relative_to(home)}")
+    return 0
+
+def selftest():
+    assert __debug__, "the self-test needs its asserts: don't run it with -O"
+    import contextlib, io
+    with tempfile.TemporaryDirectory() as tmp:
+        db.HOME = H = Path(tmp)
+        (H / "facts").mkdir()
+        base = "# Org\n\n## Sessions\n\n| a | b |\n|---|---|\n| x | y |\n\nOld names.\n"
+        chart = H / "ORGCHART.md"
+        chart.write_text(base, "utf-8")
+        f = H / "facts/product.tsv"
+        f.write_text("# id\tfact\tsince\tsource\tsummary\np1\tSeveral sensors\t2030-01-10\tf:1\tyes\np2\thidden\t2030-01-10\tf:1\tno\n", "utf-8")
+        (H / "facts/retired.tsv").write_text("old\tnew\t2030-01-12\tlegal\tf\n", "utf-8")  # not a topic
+        def run(argv, t=datetime(2030, 1, 12, 20, 0, 0)):
+            with contextlib.redirect_stdout(io.StringIO()) as o, contextlib.redirect_stderr(io.StringIO()):
+                return main(argv, t), o.getvalue()
+        code, diff = run(["--dry"])
+        assert code == 0 and "+- Several sensors (product, since 2030-01-10)" in diff and "hidden" not in diff, diff
+        assert chart.read_text("utf-8") == base and not (H / "archive").exists()  # --dry writes nothing
+        assert run([])[0] == 0
+        text = chart.read_text("utf-8").split("\n")
+        assert text[6:9] == ["| x | y |", "", START] and text[9] == TITLE and "Old names." in text, text
+        assert [p.read_text("utf-8") for p in (H / "archive/orgchart").iterdir()] == [base]
+        assert run([], datetime(2030, 1, 12, 20, 0, 1)) == (0, "nothing to change\n")  # idempotent, no new copy
+        f.write_text(f.read_text("utf-8") + "p3\tTwo\t2030-01-11\tf:2\tyes\n", "utf-8")
+        assert run([], datetime(2030, 1, 12, 20, 0, 2))[0] == 0
+        text = chart.read_text("utf-8")
+        assert text.count(START) == 1 and "- Two (product, since 2030-01-11)" in text and text.endswith("Old names.\n")
+        assert len(list((H / "archive/orgchart").iterdir())) == 2
+        before = chart.read_text("utf-8")
+        f.write_text(f.read_text("utf-8") + "".join(f"q{i}\tfact {i}\t2030-01-11\tf\tyes\n" for i in range(9)), "utf-8")
+        assert run([])[0] == 2 and chart.read_text("utf-8") == before  # 11 facts: refused, nothing written
+        f.write_text("p1\tfine\t2030-01-10\tf\tyes\np2\tbad\tyesterday\tf\tyes\n", "utf-8")
+        assert run([])[0] == 3 and chart.read_text("utf-8") == before  # a bad line: nothing written
+        f.write_text("p1\tfine\t2030-01-10\tf\tyes\n", "utf-8")
+        chart.write_text(before + START + "\n", "utf-8")
+        assert run([])[0] == 2  # a repeated marker
+        chart.write_text("# no table\n", "utf-8")
+        assert run([])[0] == 2 and run(["--other"])[0] == 2
+        assert len(list((H / "archive/orgchart").iterdir())) == 2 and not list(H.glob(".ORGCHART.*"))
+        assert block([])[-2] == "- (no fact with summary=yes)"
+    print("selftest (pilot): fine")
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(selftest() if sys.argv[1:] == ["--selftest"] else main(sys.argv[1:], datetime.now()))

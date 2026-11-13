@@ -19,6 +19,8 @@ Usage:
 Views, built in an in-memory SQLite on every call. No .db file exists, and the log stays the only source:
   pending   id, owner, creator, opened, due, state, text, source, verified, last_change
   events    line, ts, role, id, action, owner, due, text, source, verified, opened
+  facts     topic, line, id, fact, since, source, summary   ($FM_HOME/facts/*.tsv but retired.tsv; topic = file name)
+  retired   line, old, new, since, who, source             ($FM_HOME/facts/retired.tsv)
 
 The log is $FM_HOME/pending/events.tsv: ten tab-separated fields per line (those of "events" without "line"), and
 lines are only ever added. The state of an item is the fold of its events, in order. The member roles and the
@@ -164,12 +166,37 @@ def record(role, act, id_, owner, due, text, source, opened, now, warn):
         os.fsync(f.fileno())
     return id_
 
+def dated(path, warn, summary):
+    """Lines of 5 fields whose third, since, is a date and, with summary, whose fifth is yes or no. A bad one is
+    skipped with a warning. facts/README.md describes the files."""
+    data = path.read_bytes() if path.exists() else b""
+    for n, raw in enumerate(data.split(b"\n"), 1):
+        line = raw.decode("utf-8", "replace").removesuffix("\r")
+        if not line.strip() or line.startswith("#"): continue
+        c, m = line.split("\t"), None
+        if len(c) != 5: m = f"{len(c)} fields, 5 expected"
+        elif any(CONTROL.search(v) for v in c): m = "holds a control character or bytes that aren't UTF-8"
+        elif not re.fullmatch(r"\d{4}-\d\d-\d\d", c[2]): m = "since: not a valid date (YYYY-MM-DD)"
+        elif summary and c[4] not in ("yes", "no"): m = "summary: neither yes nor no"
+        if m:
+            warn(f"{path}:{n}: {m}; line skipped")
+            continue
+        yield n, c
+
+def facts(warn):
+    """(topic, line, id, fact, since, source, summary) of facts/*.tsv but retired.tsv; the topic is the file name."""
+    for path in sorted(p for p in (HOME / "facts").glob("*.tsv") if p.name != "retired.tsv"):
+        for n, c in dated(path, warn, True): yield (path.stem, n, *c)
+
 def mount(warn):
-    """An in-memory database with both views, read from the log at this moment."""
+    """An in-memory database with every view, read from the files at this moment."""
     path = HOME / "pending/events.tsv"
     events, pend = fold(path.read_bytes() if path.exists() else b"", path, warn)
     con = sqlite3.connect(":memory:")
-    for name, columns, rows in (("events", ("line",) + FIELDS, events), ("pending", PENDING, [tuple(p.values()) for p in pend.values()])):
+    for name, columns, rows in (("events", ("line",) + FIELDS, events), ("pending", PENDING, [tuple(p.values()) for p in pend.values()]),
+                                ("facts", ("topic", "line", "id", "fact", "since", "source", "summary"), list(facts(warn))),
+                                ("retired", ("line", "old", "new", "since", "who", "source"),
+                                 [(n, *c) for n, c in dated(HOME / "facts/retired.tsv", warn, False)])):
         con.execute(f"CREATE TABLE {name} ({', '.join(columns)})")
         con.executemany(f"INSERT INTO {name} VALUES ({', '.join('?' * len(columns))})", rows)
     return con
@@ -287,6 +314,18 @@ def selftest():
                 continue
             raise AssertionError(f"should have been refused: {sql}")
         assert not Path(outside).exists()
+        F = HOME / "facts"
+        F.mkdir()
+        (F / "product.tsv").write_text("# id\tfact\tsince\tsource\tsummary\np1\tseveral sensors\t2030-01-10\tf:1\tyes\n"
+                                       "p2\tx\t10-01-2030\tf:1\tno\np3\tx\t2030-01-10\tf:1\tmaybe\nonly\ttwo\n", "utf-8")
+        (F / "legal.tsv").write_text("l1\ta legal fact\t2030-01-01\tf:2\tno\r\n", "utf-8")
+        (F / "retired.tsv").write_text("# old\tnew\tsince\twho\tsource\nold\tnew\t2030-01-12\tlegal\tf:1\n"
+                                       "#old2\tnew2\t2030-01-12\tlegal\tf:1\nold3\tnew3\tyesterday\tlegal\tf\n", "utf-8")
+        av.clear()
+        assert see("SELECT topic, line, id, summary FROM facts ORDER BY topic") == [("legal", 1, "l1", "no"), ("product", 2, "p1", "yes")]
+        assert see("SELECT line, old, new, who FROM retired") == [(2, "old", "new", "legal")]
+        bad_facts = sorted({m.split(": ")[0].rsplit("/", 1)[1] for m in av if "/facts/" in m})
+        assert bad_facts == ["product.tsv:3", "product.tsv:4", "product.tsv:5", "retired.tsv:4"], bad_facts
 
         def run(argv, role=""):  # the whole of main(), with its output caught: exit code and stdout
             with contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()):

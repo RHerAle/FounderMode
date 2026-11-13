@@ -24,7 +24,7 @@ To install a pinned skill, copy the folder the link points to, at that commit, t
 | stop-slop | Every text that leaves the company: web copy, documents, emails, commits | [hardikpandya/stop-slop](https://github.com/hardikpandya/stop-slop/tree/8da1f030185bdfe8471220585162991eaeb970e9) | MIT |
 | paper-lookup | Finding papers and DOIs with a traceable source | [K-Dense-AI/scientific-agent-skills, skills/paper-lookup](https://github.com/K-Dense-AI/scientific-agent-skills/tree/5f2bc0341354fd5590aef76a533ada1e1e5b4e62/skills/paper-lookup) | MIT (`LICENSE.md`) |
 | peer-review | Reviewing a paper before it goes out | [K-Dense-AI/scientific-agent-skills, skills/peer-review](https://github.com/K-Dense-AI/scientific-agent-skills/tree/5f2bc0341354fd5590aef76a533ada1e1e5b4e62/skills/peer-review) | MIT (`LICENSE.md`) |
-| loop, claude-api, update-config, artifact-design | Paced rounds, model facts, hooks and settings, pages published as artifacts | Built into Claude Code | Nothing to install |
+| loop, claude-api, update-config, artifact-design | Paced rounds (the coordinator only, through `skills-by-role.json`), model facts, hooks and settings, pages published as artifacts | Built into Claude Code | Nothing to install |
 
 ## Skills for Design
 

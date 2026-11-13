@@ -108,7 +108,7 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 
 - **What happened:** The board measured what the compaction window costs. Bigger windows made every request carry more context, and the extra compactions of a smaller window cost little. A session whose window left little room above its fixed prompt compacted in a loop and logged "Autocompact is thrashing".
 - **Cause:** Every request re-sends the conversation, and a session idle past the cache's lifetime rewrites its whole context into the cache on its next request. The main conversation's cache lasts an hour on a Claude subscription within its included usage, and five minutes on an API key or usage credits (Claude Code's prompt caching page, checked with 2.1.303).
-- **Fix:** 300k tokens for the working roles and 1M for the coordinator and the advisors. Switch a role to a smaller window right after it compacts, or the relaunch compacts it on its first turn. `auto` means the model's full window.
+- **Fix:** 300k tokens for the working roles and the coordinator, and 1M for the advisors (see "Relay instead of compacting"). Switch a role to a smaller window right after it compacts, or the relaunch compacts it on its first turn. `auto` means the model's full window.
 - **Where:** `templates/roles.tsv`, `bin/founder-mode`.
 
 ### One session per role
@@ -151,7 +151,21 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 - **What happened:** A founder noticed that the sessions described the whole product as one of its parts. The project file that every session loads named that part nine times and the other parts not once. The role memories leaned the same way, and a supplier the company had dropped still showed up in seventeen memories and kept coming back in answers.
 - **Cause:** What a session knows about the product comes from the files it loads on every request and from its memory. A correction made in the chat disappears with `/clear` or a compaction.
 - **Fix:** Correct the source, not the conversation: rebalance the project file and the memories, and keep an inventory of what the product does, measured in the code. Before describing the product or its maturity, a session reads that inventory. The inventory also stops the opposite error, which is to credit the whole product with a figure measured on one part: each figure names the part it was measured on.
-- **Where:** the project's CLAUDE.md and each role's memory folder. No mechanism.
+- **Where:** the project's CLAUDE.md and each role's memory folder.
+
+### A fact copied into every note drifts
+
+- **What happened:** The sessions kept describing the product by its first sensor after it used several. The old phrase sat in the project file, the org chart, about 200 memories and some 880 work notes. Each session fixed its own copy, and nobody fixed the others.
+- **Cause:** Each session wrote a copy that was right on that day, and nothing updates a copy when the fact changes.
+- **Fix:** One fact, one place: each fact is a line in `facts/<topic>.tsv`, with an owner, and notes cite its id. `founder-mode retire` records an old phrase, lists every place it is still written and opens a pending item for each owner. The deliverable hook flags a retired phrase in a deliverable, a memory, a role file or the org chart. `founder-mode summary` writes the org chart's "today" block from the facts marked for it.
+- **Where:** `templates/facts/`, `bin/retire`, `bin/facts-summary`, `bin/db` (views `facts` and `retired`), `hooks/deliverable-check.sh`, `bin/check-text.js`.
+
+### Don't retire a phrase that is still true
+
+- **What happened:** The first dry runs of `retire` tried two phrases about the product's first sensor. Neither was retired: every place that used them said something true, since that sensor is the only one the company's own models analyze. The false claims sat in two other sentences of the project file, and the owner corrected them there.
+- **Cause:** A retired phrase is flagged wherever it appears, whether or not it is wrong there.
+- **Fix:** Retire a phrase only when it is false everywhere it appears. Otherwise, correct the false sentence where it is.
+- **Where:** `templates/facts/README.md`. No mechanism.
 
 ## Authority
 
@@ -453,7 +467,54 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 - **Fix:** Smaller compaction windows, only the plugins and connectors each role uses, and facts sent to the intern.
 - **Where:** `templates/roles.tsv`, `bin/founder-mode` (the settings merge), `agents/intern.md`.
 
-### A program does what a program can do
+### The memory's format isn't what costs
+
+- **What happened:** The board weighed moving the sessions' memory into a database. A week of transcripts, 8,178 requests, put 96.7% of all tokens in cache reads. Changing the memory's format would have moved that figure by little.
+- **Cause:** With autocompaction, the mean context of a request is about halfway between the floor a conversation starts from and the window where it compacts. What moves it is the number of requests, what every request re-sends and how long the conversation grows. The size of tool results doesn't move the read per request.
+- **Fix:** Cut what every request carries: tools, skills and project files a role doesn't use. Keep conversations short: one message per topic, no acknowledgement on its own, a relay instead of a compaction (pilot). Cutting X from the floor lowers the mean by about X/2, so after you measure the new floor, lower the role's window by as much to get the rest.
+- **Where:** `bin/founder-mode`, `templates/tools-by-role.json`, `templates/skills-by-role.json`, `templates/relay.md`.
+
+### One tool definition can weigh 59k characters
+
+- **What happened:** Tool definitions came to about 125,500 characters on every request of every working role. The page-publishing tool alone took 58,811, and in seven days one role had used it twice.
+- **Cause:** A tool's definition goes out with every request, whether the role calls the tool or not. `--disallowed-tools` keeps it out. Skill descriptions travel the same way, in the skill listing.
+- **Fix:** `tools-by-role.json` sorts tools into groups, and each role sets each group on or off; the launcher passes the groups set to off as `--disallowed-tools`. `skills-by-role.json` does the same for skills through `skillOverrides` (on, name-only or off), and the launcher cuts each description in the listing to 250 characters.
+- **Where:** `bin/founder-mode`, `templates/tools-by-role.json`, `templates/skills-by-role.json`, `tests/smoke.sh`.
+
+### Count tool use over 14 days, not 7
+
+- **What happened:** The board's first plan took the page tool from every role but the coordinator, based on seven days of use. Over fourteen days, the design role had called it 11 times.
+- **Cause:** A role works by topics, and a topic can last more than a week. A tool one topic needs can sit unused through the next.
+- **Fix:** Count each role's use over 14 days before you switch a group off. A role that misses a tool asks the coordinator, who turns its group back on, and the tool returns at the next launch.
+- **Where:** `templates/tools-by-role.json` (its note). No mechanism.
+
+### A timer inside a big session re-sends its whole context
+
+- **What happened:** A paced round ran on a timer inside the coordinator's session. Each run cost about 666k tokens, and it fired 16 times.
+- **Cause:** Each time a timer wakes a session, the request carries the whole conversation.
+- **Fix:** No timer runs inside a working session. A recurring job goes in a script under the system's scheduler, or in a one-shot `claude -p` session with only the tools it needs. Only the coordinator keeps the timer tools and skills.
+- **Where:** `templates/tools-by-role.json`, `templates/skills-by-role.json`, `templates/ORGCHART.md` (Context).
+
+### `skillOverrides` and `claudeMdExcludes` work through `--settings`
+
+- **What happened:** The board couldn't tell whether the two settings would apply from the launcher's `--settings` value, since the documentation shows them in settings files.
+- **Cause:** Not every key behaves the same in every settings source, and the documentation didn't say.
+- **Fix:** A `claude -p` session settled it: its transcript's attachments showed `skillOverrides` applied with 75 keys, and `claudeMdExcludes`, given an absolute path, kept the project's CLAUDE.md out. The launcher passes the skill rows to every role. The template excludes the product's CLAUDE.md for the coordinator only, since it doesn't write code; a delegation that sends a senior into that repository names the file. The template's glob form wasn't tested.
+- **Where:** `bin/founder-mode`, `templates/settings/coordinator.json`.
+
+### After a compaction, the deferred tool record is the largest attachment
+
+- **What happened:** A breakdown of the first request after each of 84 compactions put the record of deferred tools first: a median of 49,788 characters and a maximum of 90,064, ahead of the skill listing (35,177) and the system prompt (29,906).
+- **Cause:** After a compaction, Claude Code sends again the record of every deferred tool the session can load.
+- **Fix:** Veto the deferred tools a role doesn't use, in the `unused` group of `tools-by-role.json`. Nobody has measured the record since the change.
+- **Where:** `templates/tools-by-role.json`.
+
+### Relay instead of compacting (pilot)
+
+- **What happened:** The coordinator ran on a 1M window and made 41% of the team's cache reads, with a mean context of 264k in its main conversation. After a compaction, a conversation restarted from a floor of 85k to 124k tokens, and the summary in it took only 4k to 10k.
+- **Cause:** A compaction keeps the summary and sends again everything the session carries, and the conversation grows back to the window.
+- **Fix:** The coordinator moved to 300k. One role tries a relay for a week: past a threshold a hook warns, and when the role closes a topic it writes a relay from a fixed template. The coordinator closes the old session and relaunches the role with `--new`. The new session reads the relay and searches the old transcript with `founder-mode find-conversation`, which returns capped fragments of the role's own conversations. A founder's orders go in the relay word for word, with where they are, and no authorization carries over. Compaction stays as the safety net. No results yet.
+- **Where:** `templates/relay.md`, `templates/relay.tsv`, `hooks/relay-threshold.sh`, `bin/find-conversation`, `templates/roles.tsv`.
 
 - **What happened:** A role on the strongest model ran the same daily job by hand, and each run cost a turn on that model over its whole context. A founder ruled that anything programmable becomes software, and that sessions are for reasoning and analysis.
 - **Cause:** Nothing sent recurring work to a program, so it fell to the session that owned it.

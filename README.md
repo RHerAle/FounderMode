@@ -15,6 +15,9 @@ It is a bash launcher, a set of markdown templates, three subagent definitions a
 - **Pace.** The usage limit belongs to the whole account, and one session can stop all the others. The pace rules keep one session from draining the account, and `founder-mode stalled` finds the sessions a limit stopped.
 - **Git for many sessions on one account.** One branch per topic, one open PR per session and repository, a PR log, and a hook that stops the common git and gh commands that would publish under your name.
 - **Pending items (pilot).** One log of pending items where lines are only added, read through SQL views built in memory, so the state of an item lives in one place.
+- **Lean requests.** Every tool definition and skill description goes out with every request, so each role gets only the tools, skills and plugins it uses.
+- **One fact, one place (pilot).** Facts about the company live in one file per topic, with an owner, and a retired phrase is tracked down wherever it is still written.
+- **Relay instead of compacting (pilot).** A role past a context threshold writes a relay when it closes a topic and starts a fresh conversation.
 
 ## The org chart
 
@@ -84,10 +87,13 @@ Most rules in this table came out of a real failure. The PR log works around a G
 - `--append-system-prompt`: the org chart followed by the role file (the isolated role gets its role file alone);
 - `-n <name>`: the name other sessions use to message it;
 - `--model`, `--effort` and `--autocompact`, from the row;
-- `--settings`: `autoMemoryDirectory` set to the role's own memory folder, the hooks, the `settings/all.json` and `settings/<role file>.json` you add, and empty values for `CLAUDE_CODE_EFFORT_LEVEL` and `CLAUDE_CODE_AUTO_COMPACT_WINDOW`;
+- `--disallowed-tools`, for a member or the coordinator: the tool groups that its row in `tools-by-role.json` sets to off;
+- `--settings`: `autoMemoryDirectory` set to the role's own memory folder, the role's `skillOverrides` from `skills-by-role.json` with skill descriptions cut to 250 characters, `enabledPlugins` set to false for each plugin that `tools-by-role.json` gives to other roles, the hooks, the `settings/all.json` and `settings/<role file>.json` you add, and empty values for `CLAUDE_CODE_EFFORT_LEVEL` and `CLAUDE_CODE_AUTO_COMPACT_WINDOW`;
 - `--session-id` for a new conversation, or `-r <id>` to resume one.
 
 Claude Code ranks `CLAUDE_CODE_EFFORT_LEVEL` above `--effort` and `CLAUDE_CODE_AUTO_COMPACT_WINDOW` above `--autocompact`, so a value in your shell or user settings would override every row. The empty values cancel it, and the launcher warns on stderr when your shell sets either.
+
+Both JSON files sort tools or skills into groups and give each group a value per role; a role without a row takes the `default` row. Count a role's use of a tool over 14 days before you switch its group off. The template's `settings/coordinator.json` keeps the product's CLAUDE.md out of the coordinator's prompt with `claudeMdExcludes`, since the coordinator doesn't write code.
 
 `FM_DRY_RUN=1 founder-mode <role>` prints the whole command and changes nothing.
 
@@ -153,7 +159,8 @@ To let the sessions write to the other founder without asking, start Outreach wi
 | `founder-mail-gate.sh` | PreToolUse and PostToolUse on the send tool, with `FM_FOUNDER_MAIL` | Sends what `founder-mode mail` left: one email per topic, an hour after it was written. |
 | `subagent-tier.sh` | PreToolUse on Agent | Refuses a subagent that would run at the session's model and effort (general-purpose, Explore, Plan, a fork or no type) and names the tiers. |
 | `delegation-log.sh` | PostToolUse on Agent | Logs each call to a tier in `state/delegations.tsv` and gives the session its id, for `founder-mode delegations` to mark once checked. |
-| `deliverable-check.sh` | PostToolUse on Write and Edit | Runs `bin/check-text.js` on a file that matches `deliverables.txt` or `sourced.txt` and tells the session what it found. It never blocks. |
+| `deliverable-check.sh` | PostToolUse on Write and Edit | Runs `bin/check-text.js` on a file that matches `deliverables.txt` or `sourced.txt`, retired phrases included, and on a memory, a role file or the org chart for retired phrases alone, and tells the session what it found. It never blocks. |
+| `relay-threshold.sh` | UserPromptSubmit, for a role in `relay.tsv` | Past the role's threshold, tells it to write its relay when it closes the topic. It never blocks. |
 | `weekly-cap.sh` | PreToolUse on every tool, and UserPromptSubmit | Once the week reaches the cap in `weekly-cap`, refuses every tool and every prompt until the weekly reset. The coordinator still takes a founder's prompt and answers without tools. |
 
 The guard drops each redirection with its target, cuts the command at `;`, `&`, `|`, parentheses and backticks, and reads it twice: with quotes dropped, and with each quoted word kept whole. A command with a substitution (`$(...)` or backticks) gets two more readings, with each substitution as one word, so `git push origin "$(git branch --show-current)" -f` still counts as a forced push. It blocks:
@@ -196,7 +203,7 @@ Claude Code lets a call through when its hook can't start or times out, unless t
 
 ### The Design role's skills
 
-The launcher passes `$FM_HOME/plugins/<role file>` with `--plugin-dir` to a member or the coordinator when that folder holds a plugin (`.claude-plugin/plugin.json`). Design's skills go in `$FM_HOME/plugins/design`, so only Design loads them. [SKILLS.md](SKILLS.md) lists each one with its pinned source, its licence and where it goes.
+The launcher passes `$FM_HOME/plugins/<role file>` with `--plugin-dir` to a member or the coordinator when that folder holds a plugin (`.claude-plugin/plugin.json`). An installed plugin that only some roles use goes in the `plugins` map of `tools-by-role.json`, with the roles that load it. Design's skills go in `$FM_HOME/plugins/design`, so only Design loads them. [SKILLS.md](SKILLS.md) lists each one with its pinned source, its licence and where it goes.
 
 ### Stalled sessions
 
@@ -209,7 +216,7 @@ A subagent without its own `model` and `effort` runs at the session's, and some 
 | Tier | Model | Does | Never |
 |---|---|---|---|
 | `intern` | Haiku, without CLAUDE.md, `Read` and `Bash`, 30 turns | Counts, lists, greps, extracts fields, compares two files, runs a given command or test and returns evidence with `path:line` and exit codes | Draws conclusions, writes to a repository, uses the web |
-| `junior` | Sonnet, without CLAUDE.md, every tool but `Agent`, 80 turns | Read-heavy sweeps, web searches, inventories, internal drafts, code and tests | Makes a deliverable: the session that asked reviews what it writes and delivers it |
+| `junior` | Sonnet, without CLAUDE.md, `Read`, `Write`, `Edit`, `Bash`, `WebFetch`, `WebSearch` and `ToolSearch`, 80 turns | Read-heavy sweeps, web searches, inventories, internal drafts, code and tests | Makes a deliverable: the session that asked reviews what it writes and delivers it |
 | `senior` | Opus, with CLAUDE.md and every tool | Decides, writes deliverables and code, reviews | |
 
 A session starts with the lowest tier that can do the job and goes up one when a tier gets stuck. The intern and the junior skip CLAUDE.md and the schemas of the tools they don't have, so each request names its sources, the files it may touch, a cap on tool calls and every rule it needs; a junior told to work in a repository reads that repository's CLAUDE.md first. Their prompts forbid commits and pushes. They keep Bash, and in a session the launcher started the guard fires inside subagents too.
@@ -242,11 +249,28 @@ Its guards:
 - A write holds a lock on the log, checks the event against the log's current state, appends it in one write and syncs it. A tail that a cut left broken stays on its own line, and the load skips it with a warning.
 - No field takes a tab, an IPv4 address, a tailnet name, a `/root/` path or the shape of a common key or token. The list is short, so add your own hosts and keys.
 
+Two more views read `$FM_HOME/facts/`: `facts` (topic, line, id, fact, since, source, summary) and `retired` (line, old, new, since, who, source).
+
 `FM_ROLE` names the writer, and a session can set it to another role's name. The rules on who may close or reassign guard against accidents and stop no session set on getting past them. The log sits outside `state/` and the views read nothing else, so the mail and delegation logs keep their own readers. `bin/db --selftest` runs the pilot's checks against a throwaway folder.
+
+### Facts and retired phrases (pilot)
+
+`$FM_HOME/facts/` holds one tab-separated file per topic, each with an owner, and `facts/README.md` describes them. Notes and memories cite a fact's id instead of copying it.
+
+```bash
+founder-mode summary --dry      # the org chart's "What the company is today" block, from the facts marked summary=yes
+founder-mode retire 'our first sensor only' 'several sensors (facts/product.tsv)' --by engineering --source 'notes/call.md:12' --dry
+```
+
+`retire` without `--dry` adds the row to `facts/retired.tsv`, writes the list of places to `work/<coordinator>/retired/` and opens a pending item for each owner. It prints paths and counts, never a file's text. Retire a wrong claim, never a phrase that stays true of part of the company.
+
+### Relay instead of compacting (pilot)
+
+A role with a row in `relay.tsv` gets `hooks/relay-threshold.sh`, which warns once its context passes the threshold. When it closes the topic, the role writes a relay from `relay.md` and sends its path to the coordinator, which closes the old session and relaunches the role with `--new`. The new session reads the relay and searches the old conversation with `founder-mode find-conversation "<text>"`, which returns capped fragments of the role's own transcripts; the coordinator can pass `--role`, and an advisor's or the isolated role's conversations are never searched. No authorization carries over, and compaction stays as the safety net.
 
 ## Quick start
 
-You need Claude Code 2.1.295 or later (tested with 2.1.296 and 2.1.303), bash, jq and node, and python3 for the pilot `founder-mode db`. Every session signs in with your own Claude account, so one account means one person. Make sure the terms of your plan cover what you do with it: the consumer plans (Free, Pro and Max) are meant for individual use, and in the European consumer terms they exclude business use; Team, Enterprise and API accounts come under the commercial terms.
+You need Claude Code 2.1.295 or later (tested with 2.1.296 and 2.1.303), bash, jq and node, and python3 for the pilots (`db`, `summary`, `retire` and `find-conversation`). Every session signs in with your own Claude account, so one account means one person. Make sure the terms of your plan cover what you do with it: the consumer plans (Free, Pro and Max) are meant for individual use, and in the European consumer terms they exclude business use; Team, Enterprise and API accounts come under the commercial terms.
 
 ```bash
 git clone <this repository> ~/founder-mode
