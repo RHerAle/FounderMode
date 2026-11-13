@@ -21,7 +21,7 @@ Only the founders authorize a merge to the main branch, a deploy, spending money
 | Design | The visual layer, the public pages, the design system, the icon set, the brand and the logo |
 | Legal | Company formation, IP, trademarks, licenses, data protection, contracts |
 | Finance | Business plan, pricing proposals, funding, banking, the CRM |
-| Outreach | First sales contacts: drafts only, from the account sheets Finance prepares. Never sends. Isolated: sees only its own folder and takes no messages |
+| Outreach | First sales contacts: drafts, from the account sheets Finance prepares. Sends only what a founder allows at launch. Isolated: sees only its own folder and takes no messages |
 | Advisor1 | Advisory board: audits big decisions while a case is open. No file-editing tools; reads only, by instruction |
 | Advisor2 | Same as Advisor1 |
 

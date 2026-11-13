@@ -257,7 +257,7 @@ Founder Mode comes from a small company that ran about ten Claude Code sessions 
 
 - **What happened:** A reviewer timed the guard on long commands. A 100 KB heredoc held each call for 25 seconds, and a command of half a megabyte would outlast the default hook timeout of 600 seconds, after which the call goes ahead unchecked. A send hook that failed to start would have let the send through in the same way.
 - **Cause:** Claude Code treats a hook that can't start or times out as a non-blocking error, unless the hook sets `onFailure: "block"`, which needs 2.1.295 or later.
-- **Fix:** The launcher sets `onFailure: "block"` on the guard and the one-send hook, and gives the guard a 30-second timeout.
+- **Fix:** The launcher sets `onFailure: "block"` on the guard, the one-send hook and the pre entries of the outbound gate and the founder-mail gate, and gives the guard a 30-second timeout.
 - **Where:** `bin/founder-mode`, `tests/smoke.sh`.
 
 ### Read a long command in one pass
